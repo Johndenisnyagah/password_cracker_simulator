@@ -1,0 +1,29 @@
+:root {
+  --bg: #171c1c;
+  --fg: #d1e0c2;
+  --border: #2a3331;
+  --accent: #d1e0c2;
+  --font-mono: 'Space Mono', 'JetBrains Mono', 'Fira Code', monospace;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  padding: 0;
+  background-color: var(--bg);
+  color: var(--fg);
+  font-family: var(--font-mono);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Base styles for the simplified dashboard approach */
+#root {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
