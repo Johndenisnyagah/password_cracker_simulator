@@ -27,9 +27,11 @@ MAX_CONCURRENT_SIMULATIONS = 5
 active_connections = 0
 
 # Security: Restrict CORS to known frontend development origins.
+# Security: Restrict CORS. In production, you'd specify your Vercel URL.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
+    allow_origins=["*"], # Allow all for simplicity in this demo, but restrict to your Vercel URL in prod.
+    allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )

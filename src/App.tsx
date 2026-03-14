@@ -62,7 +62,8 @@ function App() {
     setStats(null);
     setIsSimulating(true);
 
-    const socket = new WebSocket("ws://localhost:8000/ws/simulate");
+    const BACKEND_URL = import.meta.env.VITE_BACKEND_WS_URL || "ws://localhost:8000";
+    const socket = new WebSocket(`${BACKEND_URL}/ws/simulate`);
     ws.current = socket;
     
     socket.onopen = () => {
