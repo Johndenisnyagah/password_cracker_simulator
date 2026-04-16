@@ -36,6 +36,20 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+@app.get("/health")
+async def health_check():
+    """
+    Lightweight health check endpoint.
+
+    Used by uptime monitors (e.g. UptimeRobot) to keep the Render free-tier
+    instance warm and avoid cold starts after periods of inactivity.
+
+    Returns:
+        dict: Service status and current active simulation count.
+    """
+    return {"status": "ok", "active_connections": active_connections}
+
+
 @app.websocket("/ws/simulate")
 async def websocket_endpoint(websocket: WebSocket):
     """
