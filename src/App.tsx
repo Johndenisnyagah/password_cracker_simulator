@@ -352,4 +352,109 @@ function CipherStrength({ value, max }: { value: number; max: number }) {
   return (
     <div className="mt-4">
       <div className="fui-tag-container">
-        <
+        <span className="fui-tag">dev</span>
+        <span className="fui-tag">back-end</span>
+        <span className="fui-tag">architecture</span>
+      </div>
+      <h2 className="fui-strength-title">Extended</h2>
+      <p className="fui-strength-subtitle">Entropy analysis for target security vector.</p>
+
+      <div className="fui-strength-stats">
+        <span className="fui-strength-percent">{Math.round(percent)}%</span>
+        <div className="fui-strength-trend">
+          <div className="fui-trend-box">↗ {value.toFixed(1)}</div>
+          <span className="opacity-40">since standby</span>
+        </div>
+      </div>
+
+      <div className="fui-strength-bars">
+        {Array.from({ length: barCount }).map((_, i) => (
+          <div
+            key={i}
+            className={`fui-bar ${i < activeBars ? 'fui-bar-active' : ''}`}
+          />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Component for Slot 3: Dual-Ring Timer.
+ * Inner ring is seconds, outer ring is minutes.
+ */
+function TimerRings({ seconds, minutes, active }: { seconds: number; minutes: number; active: boolean }) {
+  const formatNum = (n: number) => Math.floor(n).toString().padStart(2, '0');
+
+  const renderTicks = (count: number, radius: number, length: number, current: number, className: string) => {
+    return Array.from({ length: count }).map((_, i) => {
+      const angle = (i / count) * 360;
+      const isActive = i <= (current % count);
+      return (
+        <line
+          key={i}
+          x1="90"
+          y1={90 - radius}
+          x2="90"
+          y2={90 - radius + length}
+          className={`${className} ${isActive ? 'fui-tick-active' : ''} ${!active && isActive ? 'fui-tick-dim' : ''}`}
+          transform={`rotate(${angle}, 90, 90)`}
+        />
+      );
+    });
+  };
+
+  return (
+    <div className="fui-rings-container">
+      <svg width="180" height="180" viewBox="0 0 180 180" className="absolute">
+        <g className="fui-outer-ring">
+          {renderTicks(60, 80, 8, minutes, "fui-tick")}
+        </g>
+        <g className="fui-inner-ring">
+          {renderTicks(60, 60, 15, seconds, "fui-tick")}
+        </g>
+      </svg>
+      <div className="fui-timer-text tabular-nums">
+        {formatNum(minutes)}:{formatNum(seconds)}
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Component for Slot 2: Vector Hash Flow tick animation.
+ */
+function AttackTicks({ active }: { active: boolean }) {
+  const [offset, setOffset] = useState(0);
+
+  if (active) {
+    setTimeout(() => setOffset((prev) => (prev + 1) % 40), 50);
+  }
+
+  return (
+    <div className="fui-attack-indicator flex items-center justify-center">
+      <svg width="160" height="160" className="overflow-visible">
+        {Array.from({ length: 40 }).map((_, i) => {
+          const angle = (i / 40) * 360;
+          const isActive = active && (i === offset || i === (offset + 1) % 40 || i === (offset + 2) % 40);
+          return (
+            <line
+              key={i}
+              x1="80"
+              y1="10"
+              x2="80"
+              y2="25"
+              className={`fui-attack-tick ${isActive ? 'fui-attack-tick-active' : ''}`}
+              transform={`rotate(${angle}, 80, 80)`}
+            />
+          );
+        })}
+      </svg>
+      <div className="absolute text-[8px] opacity-50 tracking-tighter text-center max-w-[60px]">
+        {active ? "HASH_SYNC_IN_PROGRESS" : "SYSTEM_READY"}
+      </div>
+    </div>
+  );
+}
+
+export default App;

@@ -16,14 +16,17 @@ import hashlib
 
 import bcrypt
 import pytest
+from hypothesis import HealthCheck, given, settings, strategies as st
 
 from simulator import (
     CHARSETS,
     CrackerError,
     HashCracker,
     InvalidMaskError,
+    MASK_TOKENS,
     MAX_BRUTE_FORCE_SEARCH_SPACE,
     SearchSpaceTooLargeError,
+    _hashlib_digest,
     expand_mask,
 )
 
@@ -181,10 +184,6 @@ def test_search_space_cap_is_positive() -> None:
 # These exercise the mask parser and HashCracker invariants against a wide,
 # automatically-generated input space. They are intentionally lightweight so
 # they finish in milliseconds even under CI.
-
-from hypothesis import HealthCheck, given, settings, strategies as st
-from simulator import MASK_TOKENS, _hashlib_digest
-
 
 # Strategy: a Hashcat-style mask built from valid tokens, with the parser only
 # (we cap length so the cracker stays within search-space caps for any tests

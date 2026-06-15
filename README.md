@@ -2,12 +2,13 @@
 
 > An educational hash-cracking dashboard built to demonstrate how MD5, SHA-1, SHA-256, and bcrypt fare against brute-force, dictionary, and mask-based attacks - and why bcrypt wins.
 
-![Python](https://img.shields.io/badge/python-3.10+-blue)
+[![CI](https://github.com/Johndenisnyagah/password_cracker_simulator/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/Johndenisnyagah/password_cracker_simulator/actions/workflows/ci.yml)
+![Python](https://img.shields.io/badge/python-3.11%20%7C%203.12-blue)
 ![FastAPI](https://img.shields.io/badge/FastAPI-async-009688)
 ![React](https://img.shields.io/badge/React-19-61dafb)
 ![TypeScript](https://img.shields.io/badge/TypeScript-5-3178c6)
-![Tests](https://img.shields.io/badge/tests-23%20passing-brightgreen)
-![License](https://img.shields.io/badge/license-MIT-lightgrey)
+![Tests](https://img.shields.io/badge/tests-28%20passing-brightgreen)
+[![License: MIT](https://img.shields.io/badge/license-MIT-lightgrey)](LICENSE)
 
 > **Educational use only.** This tool only ever cracks hashes that you paste into it. It never sends data anywhere, never targets remote systems, and is not a real attacker\'s tool. See [Security & ethics](#security--ethics).
 
@@ -217,15 +218,4 @@ Things on my list for future iterations:
 - [ ] CI pipeline (GitHub Actions: ruff, mypy, pytest, docker build).
 - [ ] Hardened Dockerfile (non-root user, HEALTHCHECK, multi-stage build).
 - [ ] Logging via stdlib `logging` instead of `print()`.
-- [ ] Plug-in larger wordlists (rockyou-style) without bundling the file itself.
-- [ ] Compare-mode UI: run all three attacks side-by-side against the same hash.
-
----
-
-## License
-
-MIT - see [LICENSE](LICENSE).
-
----
-
-*Built by John as part of a cybersecurity-focused portfolio. Feedback welcome.*
+- [ ] Plug-in larger wordlists (rockyou-style) without bundlin

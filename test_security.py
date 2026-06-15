@@ -16,7 +16,6 @@ exercised in test_simulator.py.
 
 from __future__ import annotations
 
-import asyncio
 import hashlib
 import json
 import multiprocessing

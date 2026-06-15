@@ -20,7 +20,6 @@ import asyncio
 import hashlib
 import itertools
 import math
-import os
 import string
 import time
 from pathlib import Path
