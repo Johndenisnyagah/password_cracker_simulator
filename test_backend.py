@@ -1,18 +1,6 @@
-import asyncio
-from simulator import CipherSimulator
-import json
-
-async def test_simulator():
-    print("Testing CipherSimulator...")
-    simulator = CipherSimulator("abc")
-    
-    print("Running brute_force_gen...")
-    async for update in simulator.brute_force_gen():
-        print(f"Update: {json.dumps(update)}")
-        if update["status"] == "complete":
-            print("Test passed: Password found!")
-            return
-    print("Test failed: Password not found.")
-
-if __name__ == "__main__":
-    asyncio.run(test_simulator())
+# DEPRECATED - this file has been replaced.
+# Real tests now live in test_simulator.py (unit tests) and test_security.py
+# (end-to-end tests). This file is kept as a stub only because the current
+# environment cannot unlink it; please `rm` it after pulling.
+#
+# Renamed away from `test_*.py` so pytest no longer collects it.

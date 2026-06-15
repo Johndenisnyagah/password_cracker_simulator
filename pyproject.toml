@@ -1,0 +1,31 @@
+# Project configuration for the Password Cracker Simulator.
+#
+# The application is not packaged with build-system / [project] metadata
+# (it is run directly via `uvicorn main:app`). This file exists solely to
+# configure pytest so contributors do not see decorator-mode warnings and
+# pytest does not waste time on stale worktrees or legacy stub scripts.
+
+[tool.pytest.ini_options]
+asyncio_mode = "strict"
+asyncio_default_fixture_loop_scope = "function"
+
+testpaths = ["."]
+python_files = ["test_*.py"]
+
+# The .claude/ folder holds Cowork worktrees with stale duplicate copies of
+# the project files; legacy stub scripts (test_backend.py, verify_security.py)
+# now contain only comments. Both are kept out of collection here.
+norecursedirs = [
+    ".git",
+    ".claude",
+    ".hypothesis",
+    "node_modules",
+    "dist",
+    "docs",
+    ".pytest_cache",
+    "__pycache__",
+]
+
+filterwarnings = [
+    "ignore::DeprecationWarning:websockets.*",
+]
