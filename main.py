@@ -1,136 +1,198 @@
 """
 Main entry point for the Password Cracker Simulator backend.
 
-This module sets up a FastAPI server with WebSocket support for real-time 
-brute-force password cracking simulations. It includes security measures 
-such as restricted CORS and concurrent connection limits.
+Exposes a single WebSocket endpoint that accepts an AttackRequest payload and
+streams cracking progress updates back to the client. Supports three attack
+modes (brute force, dictionary, mask) and four hash algorithms (md5, sha1,
+sha256, bcrypt) via the HashCracker engine.
 """
 
-import json
+from __future__ import annotations
+
 import asyncio
+import json
+import os
+from typing import Literal, Optional
+
+import uvicorn
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-import uvicorn
-from simulator import CipherSimulator
+from pydantic import BaseModel, Field, ValidationError
+
+from simulator import (
+    CrackerError,
+    HashCracker,
+    InvalidMaskError,
+    SearchSpaceTooLargeError,
+    SUPPORTED_ALGORITHMS,
+)
 
 app = FastAPI(
     title="Password Cracker Simulator API",
-    description="Backend API for real-time password cracking simulations.",
-    version="1.0.0"
+    description="Backend API for educational hash-cracking simulations.",
+    version="2.0.0",
 )
 
-# --- Configuration & Security ---
+# --- Configuration & security ----------------------------------------------
 
-# Maximum number of concurrent simulations allowed to prevent DoS via CPU exhaustion.
+# Cap on concurrent simulations to prevent CPU exhaustion. Enforced with an
+# asyncio.Semaphore (race-free, unlike a bare global counter).
 MAX_CONCURRENT_SIMULATIONS = 5
-# Global counter for current active WebSocket connections.
-active_connections = 0
+simulation_slots = asyncio.Semaphore(MAX_CONCURRENT_SIMULATIONS)
 
-# Security: Restrict CORS to known frontend development origins.
-# Security: Restrict CORS. In production, you'd specify your Vercel URL.
+# CORS: restrict to known origins in production. Read from CORS_ORIGINS env var
+# (comma-separated). Default to local dev origins so the demo works out of the
+# box without footgunning prod.
+_default_origins = "http://localhost:5173,http://127.0.0.1:5173"
+ALLOWED_ORIGINS = [
+    o.strip() for o in os.environ.get("CORS_ORIGINS", _default_origins).split(",")
+    if o.strip()
+]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"], # Allow all for simplicity in this demo, but restrict to your Vercel URL in prod.
+    allow_origins=ALLOWED_ORIGINS,
     allow_credentials=True,
-    allow_methods=["*"],
+    allow_methods=["GET", "POST"],
     allow_headers=["*"],
 )
 
+
+# --- Inbound payload schema ------------------------------------------------
+
+class AttackRequest(BaseModel):
+    """Schema for a single cracking request received over the WebSocket."""
+
+    hash: str = Field(..., min_length=1, max_length=256,
+                      description="Target hash to crack (hex digest or bcrypt string).")
+    algorithm: Literal["md5", "sha1", "sha256", "bcrypt"] = Field(
+        ..., description="Hash algorithm used to produce the target hash.")
+    attack_mode: Literal["brute_force", "dictionary", "mask"] = Field(
+        ..., description="Which attack strategy to run.")
+
+    # brute_force params
+    charset: Literal["lower", "upper", "digits", "alphanumeric", "all"] = "lower"
+    max_length: int = Field(default=4, ge=1, le=8)
+
+    # mask param
+    mask: Optional[str] = Field(default=None, max_length=32)
+
+
+# --- Routes ----------------------------------------------------------------
+
 @app.get("/health")
-async def health_check():
-    """
-    Lightweight health check endpoint.
+async def health_check() -> dict:
+    """Lightweight health check for uptime monitors and Render warmup."""
+    active = MAX_CONCURRENT_SIMULATIONS - simulation_slots._value
+    return {
+        "status": "ok",
+        "active_connections": active,
+        "max_concurrent": MAX_CONCURRENT_SIMULATIONS,
+        "supported_algorithms": list(SUPPORTED_ALGORITHMS),
+    }
 
-    Used by uptime monitors (e.g. UptimeRobot) to keep the Render free-tier
-    instance warm and avoid cold starts after periods of inactivity.
 
-    Returns:
-        dict: Service status and current active simulation count.
-    """
-    return {"status": "ok", "active_connections": active_connections}
+async def _stream_updates(websocket: WebSocket, generator) -> None:
+    """Forward updates from an async generator to the websocket as JSON."""
+    async for update in generator:
+        await websocket.send_text(json.dumps(update))
+        # Tiny throttle to keep the client UI responsive.
+        await asyncio.sleep(0.01)
+
+
+async def _run_attack(websocket: WebSocket, req: AttackRequest) -> None:
+    """Build the cracker and dispatch to the requested attack mode."""
+    cracker = HashCracker(target_hash=req.hash, algorithm=req.algorithm)
+
+    if req.attack_mode == "brute_force":
+        gen = cracker.brute_force(charset_name=req.charset, max_length=req.max_length)
+    elif req.attack_mode == "dictionary":
+        gen = cracker.dictionary()
+    elif req.attack_mode == "mask":
+        if not req.mask:
+            raise CrackerError("attack_mode=mask requires a non-empty 'mask' field")
+        gen = cracker.mask(req.mask)
+    else:  # pragma: no cover - Pydantic Literal blocks this
+        raise CrackerError(f"Unknown attack_mode: {req.attack_mode}")
+
+    await _stream_updates(websocket, gen)
 
 
 @app.websocket("/ws/simulate")
-async def websocket_endpoint(websocket: WebSocket):
+async def websocket_endpoint(websocket: WebSocket) -> None:
     """
-    WebSocket endpoint for initiating a password cracking simulation.
-    
-    This endpoint:
-    1. Checks the concurrent connection limit.
-    2. Accepts the socket connection.
-    3. Receives a target password JSON from the client.
-    4. Validates the password length (Security measure).
-    5. Streams progress updates from CipherSimulator back to the client.
-    6. Manages connection lifecycle and cleanup.
-    
-    Args:
-        websocket: The FastAPI WebSocket connection object.
+    Receive an AttackRequest payload then stream cracking progress updates.
+
+    Lifecycle:
+        1. Accept the connection (so we can send a meaningful error if busy).
+        2. Try to acquire a simulation slot - reject immediately if at capacity.
+        3. Receive + validate the AttackRequest payload.
+        4. Dispatch to the requested attack mode and stream updates.
+        5. Release the slot on close (success, error, or disconnect).
     """
-    global active_connections
-    print("New WebSocket connection attempt...")
-    
-    # 1. Check Resource Limits
-    if active_connections >= MAX_CONCURRENT_SIMULATIONS:
-        print("Error: Max concurrent simulations reached")
-        await websocket.accept()
+    await websocket.accept()
+
+    # Try to acquire a slot without blocking - reject explicitly when full.
+    if simulation_slots._value == 0:
         await websocket.send_text(json.dumps({
-            "error": "Server busy. Too many concurrent simulations."
+            "status": "error",
+            "error": "Server busy. Too many concurrent simulations.",
         }))
         await websocket.close()
         return
 
-    # 2. Establish Connection
-    await websocket.accept()
-    active_connections += 1
-    print(f"WebSocket connected. Active connections: {active_connections}")
-    
-    try:
-        # 3. Receive Simulation Parameters
-        data = await websocket.receive_text()
-        print(f"Received data: {data}")
-        params = json.loads(data)
-        password = params.get("password")
-        
-        # 4. Input Validation (Security)
-        if not password:
-            print("Error: No password provided")
-            await websocket.send_text(json.dumps({"error": "No password provided"}))
-            await websocket.close()
-            return
-
-        if len(password) > 64:
-            print(f"Error: Password too long ({len(password)} chars)")
-            await websocket.send_text(json.dumps({
-                "error": "Password exceeds maximum length (64 characters)"
-            }))
-            await websocket.close()
-            return
-            
-        print(f"Starting simulation for password: [REDACTED]")
-        
-        # 5. Execute Simulation
-        simulator = CipherSimulator(password)
-        async for update in simulator.brute_force_gen():
-            await websocket.send_text(json.dumps(update))
-            # Throttle updates slightly to prevent socket saturation
-            await asyncio.sleep(0.01)
-            
-        print("Simulation complete.")
-            
-    except WebSocketDisconnect:
-        print("Client disconnected.")
-    except Exception as e:
-        print(f"Socket Error: {e}")
+    async with simulation_slots:
         try:
-            # Mask internal errors for security
-            await websocket.send_text(json.dumps({"error": "Internal server error"}))
-        except:
-            pass
-    finally:
-        # 6. Resource Cleanup
-        active_connections -= 1
-        print(f"Connection closed. Active connections: {active_connections}")
+            raw = await websocket.receive_text()
+            try:
+                payload = json.loads(raw)
+            except json.JSONDecodeError:
+                await websocket.send_text(json.dumps({
+                    "status": "error", "error": "Invalid JSON payload."
+                }))
+                return
+
+            try:
+                req = AttackRequest.model_validate(payload)
+            except ValidationError as exc:
+                await websocket.send_text(json.dumps({
+                    "status": "error",
+                    "error": "Invalid request payload.",
+                    "details": exc.errors(include_url=False, include_input=False),
+                }))
+                return
+
+            await _run_attack(websocket, req)
+
+        except SearchSpaceTooLargeError as exc:
+            await websocket.send_text(json.dumps({
+                "status": "error", "error": str(exc),
+            }))
+        except InvalidMaskError as exc:
+            await websocket.send_text(json.dumps({
+                "status": "error", "error": f"Invalid mask: {exc}",
+            }))
+        except CrackerError as exc:
+            await websocket.send_text(json.dumps({
+                "status": "error", "error": str(exc),
+            }))
+        except WebSocketDisconnect:
+            return
+        except Exception as exc:  # noqa: BLE001
+            # Don\'t leak internal details; surface them server-side only.
+            print(f"[websocket] unexpected error: {exc!r}")
+            try:
+                await websocket.send_text(json.dumps({
+                    "status": "error", "error": "Internal server error.",
+                }))
+            except Exception:  # pragma: no cover
+                pass
+        finally:
+            try:
+                await websocket.close()
+            except Exception:  # pragma: no cover
+                pass
+
 
 if __name__ == "__main__":
-    # Start the server using Uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)

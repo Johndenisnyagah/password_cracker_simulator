@@ -1,76 +1,231 @@
-# BRUTE.EXE — A Password Attack Simulator
+# BRUTE.EXE - Educational Password Cracking Simulator
 
-An industrial-grade, real-time password attack simulation dashboard. This educational cybersecurity application safely imitates password attack techniques against user-provided sample passwords to demonstrate password vulnerability, estimate password strength, visualize attack behavior, and provide practical security recommendations. Built with a FastAPI (Python) backend and a React (TypeScript) frontend.
+> An educational hash-cracking dashboard built to demonstrate how MD5, SHA-1, SHA-256, and bcrypt fare against brute-force, dictionary, and mask-based attacks - and why bcrypt wins.
 
-## Architecture Overview
+![Python](https://img.shields.io/badge/python-3.10+-blue)
+![FastAPI](https://img.shields.io/badge/FastAPI-async-009688)
+![React](https://img.shields.io/badge/React-19-61dafb)
+![TypeScript](https://img.shields.io/badge/TypeScript-5-3178c6)
+![Tests](https://img.shields.io/badge/tests-23%20passing-brightgreen)
+![License](https://img.shields.io/badge/license-MIT-lightgrey)
 
-The system follows a producer-consumer model over WebSockets:
-- **Backend (Python/FastAPI)**: 
-  - Asynchronous simulation engine using logical generators (`simulator.py`).
-  - Resource protection via concurrent connection limits and input validation (`main.py`).
-  - Real-time performance metrics (Guesses/Sec, Entropy analysis).
-- **Frontend (React/TS)**: 
-  - Reactive dashboard styled with a custom **"Industrial Signal"** CSS theme (manual CSS, no framework).
-  - Persistence-aware state management (retains last attack data).
-  - Custom UI components: `TimerRings` (dual-ring chrono timer), `AttackTicks` (animated hash-flow indicator), `CipherStrength` (segmented bit-bar).
-
-## Design System — "Industrial Signal"
-
-The UI uses a custom, hand-crafted CSS architecture (`App.css`, `index.css`) with no CSS framework dependencies:
-
-| Token       | Value       | Usage                          |
-|-------------|-------------|--------------------------------|
-| `--bg`      | `#171c1c`   | Deep teal background           |
-| `--fg`      | `#d1e0c2`   | Pale sage green text & accents |
-| `--border`  | `#2a3331`   | Subtle grid borders            |
-| `--accent`  | `#d1e0c2`   | Interactive element highlights |
-
-### Dashboard Layout
-- **3-column grid** (`.fui-dashboard-grid`) with 6 functional slots:
-  1. **Cipher Strength** — Bit-level complexity indicator with segmented bars.
-  2. **Vector Status** — Animated tick-based hash-flow visualization.
-  3. **Chrono-Vector** — Dual-ring timer (inner: seconds, outer: minutes).
-  4. **Cracking Speed** — Real-time throughput in Guesses/Second.
-  5. **Transfer Details** — Current guess and total cycle count.
-  6. **Actions** — Input, attack initiation, and cancel controls.
-
-### Key UI Features
-- **Completion Modal**: Full-screen overlay displaying cracked password and performance metrics.
-- **Animated Indicators**: Rotating tick rings, pulsing status labels, and smooth CSS transitions.
-- **Educational Disclaimer**: Prominently displayed at the bottom with a flashing ⚠ warning badge.
-
-## Security Features
-- **Concurrent Connection Limiting**: Prevents CPU exhaustion by limiting to 5 active simulations.
-- **Input Sanitization**: Client and server-side password length validation (max 64 chars).
-- **Restricted CORS**: Backend only accepts requests from trusted local dev origins.
-
-## Documentation
-The codebase follows industry-standard documentation practices:
-- **Python**: Google Style Docstrings for modules and classes.
-- **TypeScript**: TSDoc for components and state interfaces.
-- **CSS**: Modular documentation for design tokens and layout logic.
-
-## Getting Started
-
-### Prerequisites
-- Python 3.8+
-- Node.js 18+
-
-### Backend Setup
-1. `pip install fastapi uvicorn websockets`
-2. `npm run dev:server` — Starts the FastAPI backend on port **8000**.
-
-### Frontend Setup
-1. `npm install`
-2. `npm run dev` — Starts the Vite dev server on port **5173**.
-
-### Running Both
-Open two terminals and run both commands simultaneously. The frontend at `localhost:5173` will connect to the backend at `localhost:8000` via WebSocket.
-
-## Testing and Verification
-- Run automated security tests: `pytest test_security.py`
-- Manual security check: `py verify_security.py run`
-- Backend connectivity test: `py test_backend.py`
+> **Educational use only.** This tool only ever cracks hashes that you paste into it. It never sends data anywhere, never targets remote systems, and is not a real attacker\'s tool. See [Security & ethics](#security--ethics).
 
 ---
-*⚠ Disclaimer: BRUTE.EXE is for educational purposes only. It is designed to demonstrate cybersecurity concepts and password vulnerability. It should never be used for malicious activities.*
+
+## Demo
+
+<!-- TODO: record GIF -->
+![Dashboard demo](docs/demo.gif)
+
+<!-- TODO: add a static screenshot -->
+![Dashboard screenshot](docs/screenshot.png)
+
+**Try it live:** _(deploy the `password-cracker-backend` service from `render.yaml` and update this link)_
+
+---
+
+## What this project demonstrates
+
+This is a portfolio project intended to show:
+
+- **Realistic threat modelling** - the three industry-standard offline attack strategies (brute force, dictionary, mask) against the four most common hash algorithms.
+- **Async Python** - FastAPI + WebSockets streaming progress events from an async generator-based cracker engine.
+- **Defensive engineering** - Pydantic request validation, env-driven CORS allowlist, asyncio.Semaphore for connection limits, search-space safety caps, structured error responses.
+- **Why bcrypt matters** - the same dictionary attack that cracks a SHA-256 hash in microseconds takes orders of magnitude longer against bcrypt; a brute force against bcrypt is refused outright with a years-to-finish estimate.
+
+---
+
+## Tech stack
+
+| Layer | Stack |
+|---|---|
+| Backend | Python 3.10+, FastAPI, Pydantic v2, Uvicorn, asyncio |
+| Crypto | hashlib (md5/sha1/sha256), bcrypt |
+| Frontend | React 19, TypeScript 5, Vite 7 |
+| Tests | pytest, pytest-asyncio, websockets (client) |
+| Deploy | Docker, Render (backend), Vercel/Netlify (frontend) |
+
+---
+
+## Attack modes
+
+The backend exposes one WebSocket endpoint - `ws://<host>/ws/simulate` - that accepts an `AttackRequest` payload and streams `starting` -> `running` -> `complete` / `exhausted` / `error` updates.
+
+### 1. Brute force
+
+Iterates every candidate over a charset up to `max_length`. Search space is checked against a hard safety cap (`26^6 = 308,915,776`) before iteration starts.
+
+```json
+{
+  "hash": "187ef4436122d1cc2f40dc2b92f0eba0",
+  "algorithm": "md5",
+  "attack_mode": "brute_force",
+  "charset": "alphanumeric",
+  "max_length": 3
+}
+```
+
+Supported charsets: `lower`, `upper`, `digits`, `alphanumeric`, `all`.
+
+### 2. Dictionary
+
+Tries entries from the bundled `wordlist.txt` (~166 common passwords). Wins almost instantly against the kind of passwords found in real breach corpora.
+
+```json
+{
+  "hash": "5e884898da28047151d0e56f8dc6292773603d0d6aabbdd62a11ef721d1542d8",
+  "algorithm": "sha256",
+  "attack_mode": "dictionary"
+}
+```
+
+### 3. Mask (Hashcat-style)
+
+Constrains the search to a known pattern. Useful for passwords with predictable structure (e.g. `username + ?d?d`).
+
+Tokens: `?l` (lower), `?u` (upper), `?d` (digits), `?s` (special), `?a` (all). Literal characters are kept as-is.
+
+```json
+{
+  "hash": "5e75a4e07ac1d2956ae9211e0b1a5bdf2c79c8c8",
+  "algorithm": "sha1",
+  "attack_mode": "mask",
+  "mask": "?l?l?d?d"
+}
+```
+
+---
+
+## The bcrypt moment
+
+bcrypt is intentionally slow (~50ms per hash, by design). The simulator surfaces this concretely:
+
+- **Dictionary attack against bcrypt:** cracks `qwerty` in 4 attempts (~6 ms) - because the wordlist itself is short. This shows bcrypt does **not** protect against weak passwords.
+- **Brute force against bcrypt:** the cracker refuses to spin for years. It emits a warning like *"bcrypt is intentionally slow. Brute-forcing this space would take roughly 0.5 years at ~50ms/check"* and caps attempts at 500.
+
+This is the educational payoff: bcrypt buys you time against brute force, but a weak password is still a weak password.
+
+---
+
+## Setup
+
+### Prerequisites
+
+- Python 3.10+
+- Node.js 18+
+
+### Backend
+
+```bash
+pip install -r requirements.txt
+python main.py
+# or: uvicorn main:app --host 0.0.0.0 --port 8000
+```
+
+The backend listens on `:8000` by default. Visit `http://localhost:8000/health` to confirm it is up.
+
+### Frontend
+
+```bash
+npm install
+npm run dev
+```
+
+Vite serves the dashboard at `http://localhost:5173`. The frontend connects to the backend at `VITE_BACKEND_WS_URL` (defaults to `ws://localhost:8000`) - set it in `.env.local` for non-local deploys.
+
+### Docker
+
+```bash
+docker build -t brute-exe .
+docker run -p 8000:8000 -e CORS_ORIGINS=http://localhost:5173 brute-exe
+```
+
+### Render (backend)
+
+The included `render.yaml` deploys the FastAPI backend as a free-tier web service. Pair it with Vercel or Netlify for the frontend.
+
+---
+
+## Configuration
+
+| Env var | Default | Purpose |
+|---|---|---|
+| `CORS_ORIGINS` | `http://localhost:5173,http://127.0.0.1:5173` | Comma-separated allowlist of origins. Set this to your deployed frontend URL in production. |
+| `PORT` | `8000` | Render injects this automatically. |
+
+---
+
+## Testing
+
+```bash
+pytest -v
+```
+
+The suite covers:
+
+- **`test_simulator.py`** (18 tests) - hash verification across md5/sha1/sha256/bcrypt, brute-force happy + exhausted + oversize cases, dictionary happy + exhausted + bundled-wordlist cases, mask parser (4 cases) and mask attack happy + oversize cases.
+- **`test_security.py`** (5 tests, end-to-end via a live uvicorn server) - invalid payload rejection, invalid JSON, unsupported algorithm, search-space cap, end-to-end happy path.
+
+**Current status:** 23/23 passing in under a second.
+
+---
+
+## Architecture
+
+```
++----------------+   WebSocket    +---------------------+
+|  React UI      | <------------> |  FastAPI endpoint   |
+|  (Vite/TS)     |  JSON stream   |  /ws/simulate       |
++----------------+                +----------+----------+
+                                             |
+                                             v
+                                  +----------+----------+
+                                  |  HashCracker        |
+                                  |  - brute_force()    |
+                                  |  - dictionary()     |
+                                  |  - mask()           |
+                                  +----------+----------+
+                                             |
+                                             v
+                                  +----------+----------+
+                                  |  hashlib / bcrypt   |
+                                  +---------------------+
+```
+
+The cracker is an async generator. Each iteration yields a JSON-serialisable progress dict, the endpoint forwards it over the WebSocket, and the React dashboard merges it into its `stats` state.
+
+---
+
+## Security & ethics
+
+This is a teaching tool. It hashes guesses locally and compares them to a hash you paste into the UI. It does not - and cannot - target remote systems.
+
+**Do not use this (or any cracking tool) against systems you do not own or have written permission to test.** Unauthorised computer access is illegal in most jurisdictions (US: CFAA, UK: Computer Misuse Act, EU: NIS 2 / national law).
+
+If you are interested in this space:
+- Try the [Hack The Box Academy](https://academy.hackthebox.com/) password-cracking modules.
+- Read [OWASP\'s password storage cheat sheet](https://cheatsheetseries.owasp.org/cheatsheets/Password_Storage_Cheat_Sheet.html).
+- For real research on offline cracking, use [Hashcat](https://hashcat.net/) or [John the Ripper](https://www.openwall.com/john/) - both far faster than anything this educational simulator does.
+
+---
+
+## Roadmap
+
+Things on my list for future iterations:
+
+- [ ] CI pipeline (GitHub Actions: ruff, mypy, pytest, docker build).
+- [ ] Hardened Dockerfile (non-root user, HEALTHCHECK, multi-stage build).
+- [ ] Logging via stdlib `logging` instead of `print()`.
+- [ ] Plug-in larger wordlists (rockyou-style) without bundling the file itself.
+- [ ] Compare-mode UI: run all three attacks side-by-side against the same hash.
+
+---
+
+## License
+
+MIT - see [LICENSE](LICENSE).
+
+---
+
+*Built by John as part of a cybersecurity-focused portfolio. Feedback welcome.*

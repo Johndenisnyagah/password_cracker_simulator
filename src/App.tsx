@@ -2,40 +2,66 @@ import { useState, useRef } from "react";
 import "./App.css";
 
 /**
- * Interface representing the structure of updates received from the 
+ * Interface representing the structure of updates received from the
  * backend simulation via WebSocket.
  */
 interface SimUpdate {
-  /** Current status of the simulation: starting, running, complete, or error. */
+  /** Current status: starting, running, complete, exhausted, or error. */
   status: string;
-  /** The latest character string trial attempted by the simulator. */
+  /** Which attack strategy is running: brute_force, dictionary, or mask. */
+  method?: string;
+  /** Hash algorithm in use: md5, sha1, sha256, or bcrypt. */
+  algorithm?: string;
+  /** Charset preset used for brute-force runs. */
+  charset?: string;
+  /** Max candidate length used for brute-force runs. */
+  max_length?: number;
+  /** Mask string used for mask runs. */
+  mask?: string;
+  /** The latest candidate trialled by the cracker. */
   current_guess?: string;
-  /** Cumulative attempts performed in the current simulation segment. */
+  /** Cumulative attempts performed in the current run segment. */
   attempts?: number;
-  /** Total number of attempts performed throughout the entire simulation. */
+  /** Total number of attempts performed throughout the entire run. */
   total_attempts?: number;
-  /** Seconds elapsed since the start of the simulation. */
+  /** Seconds elapsed since the start of the run. */
   elapsed?: number;
   /** Current cracking throughput in guesses per second. */
   speed?: number;
-  /** Mathematical complexity of the target password in bits. */
+  /** Mathematical complexity of the search space in bits. */
   entropy?: number;
-  /** Total possible combinations in the character search space. */
+  /** Total possible candidates in the search space. */
   search_space?: number;
   /** The final discovered password (only on 'complete' status). */
   password?: string;
   /** Total duration of the successful crack. */
   time_taken?: number;
+  /** Non-fatal advisory (e.g. bcrypt intractability warning). */
+  warning?: string;
+  /** Informational message (e.g. "search space exhausted"). */
+  message?: string;
   /** Human-readable error message if something went wrong. */
   error?: string;
 }
+
+type Algorithm = "md5" | "sha1" | "sha256" | "bcrypt";
+type AttackMode = "brute_force" | "dictionary" | "mask";
+type Charset = "lower" | "upper" | "digits" | "alphanumeric" | "all";
 
 /**
  * Main application component for the Password Cracker Simulator.
  * Manages WebSocket connections, global simulation state, and dashboard layout.
  */
 function App() {
-  const [targetPassword, setTargetPassword] = useState("");
+  // Target hash + algorithm selection.
+  const [targetHash, setTargetHash] = useState("");
+  const [algorithm, setAlgorithm] = useState<Algorithm>("sha256");
+  // Attack mode + mode-specific params.
+  const [attackMode, setAttackMode] = useState<AttackMode>("brute_force");
+  const [charset, setCharset] = useState<Charset>("lower");
+  const [maxLength, setMaxLength] = useState<number>(4);
+  const [mask, setMask] = useState<string>("?l?l?l?d");
+
   const [isSimulating, setIsSimulating] = useState(false);
   /** Stores the most recent update from the backend, merging state where appropriate. */
   const [stats, setStats] = useState<SimUpdate | null>(null);
@@ -43,21 +69,22 @@ function App() {
   const ws = useRef<WebSocket | null>(null);
 
     /**
-     * Initiates the password cracking simulation by opening a WebSocket
-     * connection to the backend and sending the target password.
+     * Initiates the cracking simulation by opening a WebSocket connection to
+     * the backend and sending the AttackRequest payload.
      */
     const runSimulation = () => {
-    if (!targetPassword) return;
-    
-    // Client-side length validation (mirrors backend protection)
-    if (targetPassword.length > 64) {
-      setStats({ status: "error", error: "Password too long (max 64 chars)" });
+    if (!targetHash.trim()) {
+      setStats({ status: "error", error: "Target hash is required" });
       return;
     }
-    
+    if (attackMode === "mask" && !mask.trim()) {
+      setStats({ status: "error", error: "Mask is required when attack_mode=mask" });
+      return;
+    }
+
     // Ensure previous connections are closed before starting new one
     if (ws.current) ws.current.close();
-    
+
     // Reset dashboard state for new run
     setStats(null);
     setIsSimulating(true);
@@ -65,10 +92,19 @@ function App() {
     const BACKEND_URL = import.meta.env.VITE_BACKEND_WS_URL || "ws://localhost:8000";
     const socket = new WebSocket(`${BACKEND_URL}/ws/simulate`);
     ws.current = socket;
-    
+
+    const payload = {
+      hash: targetHash.trim(),
+      algorithm,
+      attack_mode: attackMode,
+      charset,
+      max_length: maxLength,
+      mask: attackMode === "mask" ? mask.trim() : undefined,
+    };
+
     socket.onopen = () => {
       console.log("WebSocket Connection Opened");
-      socket.send(JSON.stringify({ password: targetPassword }));
+      socket.send(JSON.stringify(payload));
     };
 
     socket.onmessage = (event) => {
@@ -173,25 +209,81 @@ function App() {
           </div>
         </div>
 
-        {/* Slot 6: Actions - Unified control for simulation and input */}
+        {/* Slot 6: Actions - Attack configuration + run/cancel controls */}
         <div className="fui-grid-cell">
           <div className="fui-label">Actions</div>
           <div className="space-y-2">
             {!isSimulating ? (
               <div className="space-y-2 pt-2">
-                <input 
-                  type="text" 
-                  value={targetPassword}
-                  onChange={(e) => setTargetPassword(e.target.value)}
-                  placeholder="Enter target password"
+                <input
+                  type="text"
+                  value={targetHash}
+                  onChange={(e) => setTargetHash(e.target.value)}
+                  placeholder="Target hash (e.g. SHA-256 digest)"
                   className="fui-input"
                 />
+                <div className="flex gap-2">
+                  <select
+                    value={algorithm}
+                    onChange={(e) => setAlgorithm(e.target.value as Algorithm)}
+                    className="fui-input flex-1"
+                  >
+                    <option value="md5">MD5</option>
+                    <option value="sha1">SHA-1</option>
+                    <option value="sha256">SHA-256</option>
+                    <option value="bcrypt">bcrypt</option>
+                  </select>
+                  <select
+                    value={attackMode}
+                    onChange={(e) => setAttackMode(e.target.value as AttackMode)}
+                    className="fui-input flex-1"
+                  >
+                    <option value="brute_force">Brute force</option>
+                    <option value="dictionary">Dictionary</option>
+                    <option value="mask">Mask</option>
+                  </select>
+                </div>
+                {attackMode === "brute_force" && (
+                  <div className="flex gap-2">
+                    <select
+                      value={charset}
+                      onChange={(e) => setCharset(e.target.value as Charset)}
+                      className="fui-input flex-1"
+                    >
+                      <option value="lower">lower</option>
+                      <option value="upper">upper</option>
+                      <option value="digits">digits</option>
+                      <option value="alphanumeric">alphanumeric</option>
+                      <option value="all">all</option>
+                    </select>
+                    <input
+                      type="number"
+                      min={1}
+                      max={8}
+                      value={maxLength}
+                      onChange={(e) => setMaxLength(Number(e.target.value))}
+                      className="fui-input w-20"
+                      title="Max candidate length"
+                    />
+                  </div>
+                )}
+                {attackMode === "mask" && (
+                  <input
+                    type="text"
+                    value={mask}
+                    onChange={(e) => setMask(e.target.value)}
+                    placeholder="Mask (e.g. ?l?l?l?d?d)"
+                    className="fui-input"
+                  />
+                )}
                 <button onClick={runSimulation} className="fui-btn fui-btn-primary">Initiate Attack</button>
               </div>
             ) : (
               <div className="space-y-2">
                 <button onClick={() => ws.current?.close()} className="fui-btn w-full">Cancel Attack</button>
-                <div className="text-center text-[10px] animate-pulse opacity-50 tracking-widest mt-4">BRUTE_FORCE_ACTIVE</div>
+                <div className="text-center text-[10px] animate-pulse opacity-50 tracking-widest mt-4">
+                  {(stats?.method ?? "ATTACK").toUpperCase()}_ACTIVE
+                </div>
               </div>
             )}
             <button className="fui-btn w-full" disabled>Close Window</button>
@@ -260,114 +352,4 @@ function CipherStrength({ value, max }: { value: number; max: number }) {
   return (
     <div className="mt-4">
       <div className="fui-tag-container">
-        <span className="fui-tag">dev</span>
-        <span className="fui-tag">back-end</span>
-        <span className="fui-tag">architecture</span>
-      </div>
-      <h2 className="fui-strength-title">Extended</h2>
-      <p className="fui-strength-subtitle">Entropy analysis for target security vector.</p>
-      
-      <div className="fui-strength-stats">
-        <span className="fui-strength-percent">{Math.round(percent)}%</span>
-        <div className="fui-strength-trend">
-          <div className="fui-trend-box">↗ {value.toFixed(1)}</div>
-          <span className="opacity-40">since standby</span>
-        </div>
-      </div>
-
-      <div className="fui-strength-bars">
-        {Array.from({ length: barCount }).map((_, i) => (
-          <div 
-            key={i} 
-            className={`fui-bar ${i < activeBars ? 'fui-bar-active' : ''}`}
-          />
-        ))}
-      </div>
-    </div>
-  );
-}
-
-/**
- * Component for Slot 3: Dual-Ring Timer.
- * Features an inner ring for seconds and an outer ring for minutes using tick marks.
- */
-function TimerRings({ seconds, minutes, active }: { seconds: number; minutes: number; active: boolean }) {
-  const formatNum = (n: number) => Math.floor(n).toString().padStart(2, '0');
-  
-  // Create ticks for rings
-  const renderTicks = (count: number, radius: number, length: number, current: number, className: string) => {
-    return Array.from({ length: count }).map((_, i) => {
-      const angle = (i / count) * 360;
-      const isActive = i <= (current % count);
-      return (
-        <line
-          key={i}
-          x1="90"
-          y1={90 - radius}
-          x2="90"
-          y2={90 - radius + length}
-          className={`${className} ${isActive ? 'fui-tick-active' : ''} ${!active && isActive ? 'fui-tick-dim' : ''}`}
-          transform={`rotate(${angle}, 90, 90)`}
-        />
-      );
-    });
-  };
-
-  return (
-    <div className="fui-rings-container">
-      <svg width="180" height="180" viewBox="0 0 180 180" className="absolute">
-        {/* Outer Ring - Minutes */}
-        <g className="fui-outer-ring">
-          {renderTicks(60, 80, 8, minutes, "fui-tick")}
-        </g>
-        {/* Inner Ring - Seconds */}
-        <g className="fui-inner-ring">
-          {renderTicks(60, 60, 15, seconds, "fui-tick")}
-        </g>
-      </svg>
-      <div className="fui-timer-text tabular-nums">
-        {formatNum(minutes)}:{formatNum(seconds)}
-      </div>
-    </div>
-  );
-}
-
-/**
- * Component for Slot 2: Vector Hash Flow (GIF-like tick animation).
- * Displays a single ring of dense ticks with a chasing highlight.
- */
-function AttackTicks({ active }: { active: boolean }) {
-  const [offset, setOffset] = useState(0);
-
-  // Simple animation for the chasing effect
-  if (active) {
-    setTimeout(() => setOffset((prev) => (prev + 1) % 40), 50);
-  }
-
-  return (
-    <div className="fui-attack-indicator flex items-center justify-center">
-      <svg width="160" height="160" className="overflow-visible">
-        {Array.from({ length: 40 }).map((_, i) => {
-          const angle = (i / 40) * 360;
-          const isActive = active && (i === offset || i === (offset + 1) % 40 || i === (offset + 2) % 40);
-          return (
-            <line
-              key={i}
-              x1="80"
-              y1="10"
-              x2="80"
-              y2="25"
-              className={`fui-attack-tick ${isActive ? 'fui-attack-tick-active' : ''}`}
-              transform={`rotate(${angle}, 80, 80)`}
-            />
-          );
-        })}
-      </svg>
-      <div className="absolute text-[8px] opacity-50 tracking-tighter text-center max-w-[60px]">
-        {active ? "HASH_SYNC_IN_PROGRESS" : "SYSTEM_READY"}
-      </div>
-    </div>
-  );
-}
-
-export default App;
+        <
