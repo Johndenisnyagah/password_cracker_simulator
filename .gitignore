@@ -41,3 +41,6 @@ dist-ssr
 
 # Claude / Cowork artefacts
 .claude/
+
+# stray bytecode (was committed once)
+simulator.cpython-*.pyc

@@ -16,13 +16,9 @@
 
 ## Demo
 
-<!-- TODO: record GIF -->
-![Dashboard demo](docs/demo.gif)
+_A recorded GIF and screenshot of the dashboard are on the way. Until then, the [Setup](#setup) section runs the full dashboard locally in two commands._
 
-<!-- TODO: add a static screenshot -->
-![Dashboard screenshot](docs/screenshot.png)
-
-**Try it live:** _(deploy the `password-cracker-backend` service from `render.yaml` and update this link)_
+**Try it live:** not currently hosted — the backend deploys from the included `render.yaml` (free tier) paired with Vercel/Netlify for the frontend. See [Setup → Render](#render-backend).
 
 ---
 
@@ -165,10 +161,10 @@ pytest -v
 
 The suite covers:
 
-- **`test_simulator.py`** (18 tests) - hash verification across md5/sha1/sha256/bcrypt, brute-force happy + exhausted + oversize cases, dictionary happy + exhausted + bundled-wordlist cases, mask parser (4 cases) and mask attack happy + oversize cases.
+- **`test_simulator.py`** (23 tests) - hash verification across md5/sha1/sha256/bcrypt, brute-force happy + exhausted + oversize cases, dictionary happy + exhausted + bundled-wordlist cases, mask parser (4 cases) and mask attack happy + oversize cases.
 - **`test_security.py`** (5 tests, end-to-end via a live uvicorn server) - invalid payload rejection, invalid JSON, unsupported algorithm, search-space cap, end-to-end happy path.
 
-**Current status:** 23/23 passing in under a second.
+**Current status:** 28/28 passing in under three seconds.
 
 ---
 
