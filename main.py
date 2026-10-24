@@ -11,8 +11,9 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
-from typing import Literal, Optional
+from typing import Literal
 
 import uvicorn
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
@@ -20,12 +21,14 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field, ValidationError
 
 from simulator import (
+    SUPPORTED_ALGORITHMS,
     CrackerError,
     HashCracker,
     InvalidMaskError,
     SearchSpaceTooLargeError,
-    SUPPORTED_ALGORITHMS,
 )
+
+logger = logging.getLogger(__name__)
 
 app = FastAPI(
     title="Password Cracker Simulator API",
@@ -75,7 +78,7 @@ class AttackRequest(BaseModel):
     max_length: int = Field(default=4, ge=1, le=8)
 
     # mask param
-    mask: Optional[str] = Field(default=None, max_length=32)
+    mask: str | None = Field(default=None, max_length=32)
 
 
 # --- Routes ----------------------------------------------------------------
@@ -186,12 +189,14 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                     "status": "error", "error": "Internal server error.",
                 }))
             except Exception:  # pragma: no cover
-                pass
+                # The socket is already broken; nothing left to tell the client.
+                logger.debug("failed to send error frame to closed socket", exc_info=True)
         finally:
             try:
                 await websocket.close()
             except Exception:  # pragma: no cover
-                pass
+                # Close on an already-closed/aborted socket is a no-op worth noting, not raising.
+                logger.debug("websocket close during teardown failed", exc_info=True)
 
 
 if __name__ == "__main__":

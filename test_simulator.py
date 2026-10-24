@@ -16,20 +16,20 @@ import hashlib
 
 import bcrypt
 import pytest
-from hypothesis import HealthCheck, given, settings, strategies as st
+from hypothesis import HealthCheck, given, settings
+from hypothesis import strategies as st
 
 from simulator import (
     CHARSETS,
+    MASK_TOKENS,
+    MAX_BRUTE_FORCE_SEARCH_SPACE,
     CrackerError,
     HashCracker,
     InvalidMaskError,
-    MASK_TOKENS,
-    MAX_BRUTE_FORCE_SEARCH_SPACE,
     SearchSpaceTooLargeError,
     _hashlib_digest,
     expand_mask,
 )
-
 
 # --- helpers ---------------------------------------------------------------
 

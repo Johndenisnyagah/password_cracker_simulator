@@ -22,8 +22,8 @@ import itertools
 import math
 import string
 import time
+from collections.abc import AsyncIterator, Iterable
 from pathlib import Path
-from typing import AsyncIterator, Iterable
 
 try:
     import bcrypt  # type: ignore
