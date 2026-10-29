@@ -28,6 +28,10 @@ from simulator import (
     SearchSpaceTooLargeError,
 )
 
+logging.basicConfig(
+    level=os.environ.get("LOG_LEVEL", "INFO"),
+    format="%(asctime)s %(levelname)s %(name)s %(message)s",
+)
 logger = logging.getLogger(__name__)
 
 app = FastAPI(
@@ -38,10 +42,12 @@ app = FastAPI(
 
 # --- Configuration & security ----------------------------------------------
 
-# Cap on concurrent simulations to prevent CPU exhaustion. Enforced with an
-# asyncio.Semaphore (race-free, unlike a bare global counter).
+# Cap on concurrent simulations to prevent CPU exhaustion. asyncio runs this
+# server on a single thread, and the check-and-increment below has no await
+# between its two steps, so a plain counter is race-free here - and it exposes
+# the active count without reaching into a Semaphore's private _value.
 MAX_CONCURRENT_SIMULATIONS = 5
-simulation_slots = asyncio.Semaphore(MAX_CONCURRENT_SIMULATIONS)
+_active_simulations = 0
 
 # CORS: restrict to known origins in production. Read from CORS_ORIGINS env var
 # (comma-separated). Default to local dev origins so the demo works out of the
@@ -103,10 +109,9 @@ class AttackRequest(BaseModel):
 @app.get("/health")
 async def health_check() -> dict:
     """Lightweight health check for uptime monitors and Render warmup."""
-    active = MAX_CONCURRENT_SIMULATIONS - simulation_slots._value
     return {
         "status": "ok",
-        "active_connections": active,
+        "active_connections": _active_simulations,
         "max_concurrent": MAX_CONCURRENT_SIMULATIONS,
         "supported_algorithms": list(SUPPORTED_ALGORITHMS),
     }
@@ -159,8 +164,10 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
 
     await websocket.accept()
 
-    # Try to acquire a slot without blocking - reject explicitly when full.
-    if simulation_slots._value == 0:
+    # Reject explicitly when at capacity. Safe without a lock: single-threaded
+    # event loop, no await between the check and the increment below.
+    global _active_simulations
+    if _active_simulations >= MAX_CONCURRENT_SIMULATIONS:
         await websocket.send_text(json.dumps({
             "status": "error",
             "error": "Server busy. Too many concurrent simulations.",
@@ -168,7 +175,8 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
         await websocket.close()
         return
 
-    async with simulation_slots:
+    _active_simulations += 1
+    try:
         try:
             raw = await websocket.receive_text()
             try:
@@ -205,9 +213,9 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
             }))
         except WebSocketDisconnect:
             return
-        except Exception as exc:  # noqa: BLE001
+        except Exception:
             # Don\'t leak internal details; surface them server-side only.
-            print(f"[websocket] unexpected error: {exc!r}")
+            logger.exception("unexpected error in websocket handler")
             try:
                 await websocket.send_text(json.dumps({
                     "status": "error", "error": "Internal server error.",
@@ -221,6 +229,8 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
             except Exception:  # pragma: no cover
                 # Close on an already-closed/aborted socket is a no-op worth noting, not raising.
                 logger.debug("websocket close during teardown failed", exc_info=True)
+    finally:
+        _active_simulations -= 1
 
 
 if __name__ == "__main__":

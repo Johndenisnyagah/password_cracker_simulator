@@ -13,8 +13,7 @@ testpaths = ["."]
 python_files = ["test_*.py"]
 
 # The .claude/ folder holds Cowork worktrees with stale duplicate copies of
-# the project files; legacy stub scripts (test_backend.py, verify_security.py)
-# now contain only comments. Both are kept out of collection here.
+# the project files; keep them out of collection here.
 norecursedirs = [
     ".git",
     ".claude",
