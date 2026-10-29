@@ -207,5 +207,26 @@ async def test_health_stays_responsive_during_bcrypt_attack(server) -> None:
     assert final is not None and final["status"] == "exhausted"
 
 
+@pytest.mark.asyncio
+async def test_audit_endpoint_grades_a_hash(server) -> None:
+    """POST /audit returns an OWASP verdict for a pasted hash."""
+    import urllib.request
+
+    weak = hashlib.md5(b"secret").hexdigest()
+
+    def post() -> dict:
+        body = json.dumps({"hash": weak}).encode()
+        request = urllib.request.Request(
+            f"http://127.0.0.1:{_PORT}/audit", data=body,
+            headers={"Content-Type": "application/json"},
+        )
+        with urllib.request.urlopen(request, timeout=5) as resp:
+            return json.loads(resp.read())
+
+    result = await asyncio.to_thread(post)
+    assert result["verdict"] == "unsuitable"
+    assert result["algorithm"] == "md5"
+
+
 if __name__ == "__main__":
     print("Run with: pytest test_security.py")

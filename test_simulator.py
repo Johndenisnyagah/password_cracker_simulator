@@ -376,3 +376,49 @@ def test_human_duration(seconds: float, expected: str) -> None:
     from simulator import human_duration
 
     assert human_duration(seconds) == expected
+
+
+# --- argon2id and pbkdf2 as crackable (slow) algorithms ----------------------
+
+@pytest.mark.asyncio
+async def test_dictionary_cracks_argon2id() -> None:
+    """A weak password still falls to a dictionary attack under Argon2id."""
+    from argon2 import PasswordHasher
+
+    target = PasswordHasher().hash("qwerty")
+    cracker = HashCracker(target_hash=target, algorithm="argon2id")
+    assert cracker.is_slow is True
+    updates = await _collect(cracker.dictionary())
+    assert updates[-1]["status"] == "complete"
+    assert updates[-1]["password"] == "qwerty"
+
+
+@pytest.mark.asyncio
+async def test_dictionary_cracks_pbkdf2() -> None:
+    """Same lesson for PBKDF2: a strong KDF does not save a wordlist password."""
+    import os
+
+    from simulator import pbkdf2_encode
+
+    target = pbkdf2_encode("letmein", os.urandom(16), 50_000)
+    cracker = HashCracker(target_hash=target, algorithm="pbkdf2_sha256")
+    assert cracker.verify("letmein") is True
+    assert cracker.verify("nope") is False
+    updates = await _collect(cracker.dictionary())
+    assert updates[-1]["password"] == "letmein"
+
+
+@pytest.mark.asyncio
+async def test_argon2id_brute_force_is_capped(monkeypatch) -> None:
+    """Argon2id brute force shares the slow-KDF attempt cap (no infinite spin)."""
+    from argon2 import PasswordHasher
+
+    import simulator
+
+    monkeypatch.setattr(simulator, "MAX_BCRYPT_BRUTE_FORCE_ATTEMPTS", 15)
+    target = PasswordHasher(memory_cost=8, time_cost=1, parallelism=1).hash("zzz")
+    cracker = HashCracker(target_hash=target, algorithm="argon2id")
+    updates = await _collect(cracker.brute_force("lower", 3))
+    assert updates[-1]["status"] == "exhausted"
+    assert updates[-1]["total_attempts"] == 15
+    assert "argon2id" in updates[0]["warning"]

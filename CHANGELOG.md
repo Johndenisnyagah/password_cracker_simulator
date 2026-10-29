@@ -15,6 +15,11 @@ based on [Keep a Changelog](https://keepachangelog.com/).
   middleware never covered WebSockets.
 
 ### Added
+- Argon2id and PBKDF2-HMAC-SHA256 as supported algorithms, both cracked via
+  the same slow-KDF path as bcrypt (shared attempt/time cap).
+- `POST /audit`: grades a pasted hash against the OWASP Password Storage Cheat
+  Sheet (algorithm ranking, bcrypt cost, Argon2id memory/time, PBKDF2
+  iterations) without needing the plaintext. New `storage_audit.py` module.
 - Every bcrypt run (brute force, dictionary, mask) stops after 500 attempts or
   30 seconds, whichever comes first. Mask and dictionary runs were previously
   uncapped against bcrypt.

@@ -27,6 +27,7 @@ from simulator import (
     InvalidMaskError,
     SearchSpaceTooLargeError,
 )
+from storage_audit import audit_hash
 
 logging.basicConfig(
     level=os.environ.get("LOG_LEVEL", "INFO"),
@@ -91,8 +92,9 @@ class AttackRequest(BaseModel):
 
     hash: str = Field(..., min_length=1, max_length=256,
                       description="Target hash to crack (hex digest or bcrypt string).")
-    algorithm: Literal["md5", "sha1", "sha256", "bcrypt"] = Field(
-        ..., description="Hash algorithm used to produce the target hash.")
+    algorithm: Literal[
+        "md5", "sha1", "sha256", "bcrypt", "argon2id", "pbkdf2_sha256"
+    ] = Field(..., description="Hash algorithm used to produce the target hash.")
     attack_mode: Literal["brute_force", "dictionary", "mask"] = Field(
         ..., description="Which attack strategy to run.")
 
@@ -115,6 +117,18 @@ async def health_check() -> dict:
         "max_concurrent": MAX_CONCURRENT_SIMULATIONS,
         "supported_algorithms": list(SUPPORTED_ALGORITHMS),
     }
+
+
+class AuditRequest(BaseModel):
+    """A hash to grade against OWASP password-storage minimums."""
+
+    hash: str = Field(..., min_length=1, max_length=256)
+
+
+@app.post("/audit")
+async def audit(req: AuditRequest) -> dict:
+    """Grade how a pasted password hash was stored (no plaintext needed)."""
+    return audit_hash(req.hash)
 
 
 async def _stream_updates(websocket: WebSocket, generator) -> None:
