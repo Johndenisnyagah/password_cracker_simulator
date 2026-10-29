@@ -11,4 +11,4 @@ pytest-asyncio>=0.23,<1.0
 hypothesis>=6.0,<7.0
 
 # Lint
-ruff>=0.5,<1.0
+ruff>=0.17.2,<1.0
