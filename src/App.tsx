@@ -44,7 +44,7 @@ interface SimUpdate {
   error?: string;
 }
 
-type Algorithm = "md5" | "sha1" | "sha256" | "bcrypt";
+type Algorithm = "md5" | "sha1" | "sha256" | "bcrypt" | "argon2id" | "pbkdf2_sha256";
 type AttackMode = "brute_force" | "dictionary" | "mask";
 type Charset = "lower" | "upper" | "digits" | "alphanumeric" | "all";
 
@@ -232,6 +232,8 @@ function App() {
                     <option value="sha1">SHA-1</option>
                     <option value="sha256">SHA-256</option>
                     <option value="bcrypt">bcrypt</option>
+                    <option value="argon2id">argon2id</option>
+                    <option value="pbkdf2_sha256">pbkdf2_sha256</option>
                   </select>
                   <select
                     value={attackMode}

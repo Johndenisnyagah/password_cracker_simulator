@@ -8,7 +8,7 @@ strategies against a target hash:
     * dictionary    - try entries from a wordlist
     * mask          - Hashcat-style mask (e.g. "?l?l?l?d?d") to constrain the search
 
-Supported hash algorithms: md5, sha1, sha256, bcrypt.
+Supported hash algorithms: md5, sha1, sha256, bcrypt, argon2id, pbkdf2_sha256.
 
 Educational use only. The simulator hashes its own guesses locally and compares
 them to the user-supplied target hash - it never sends data anywhere.
@@ -17,7 +17,9 @@ them to the user-supplied target hash - it never sends data anywhere.
 from __future__ import annotations
 
 import asyncio
+import base64
 import hashlib
+import hmac
 import itertools
 import math
 import re
@@ -31,6 +33,14 @@ try:
     _BCRYPT_AVAILABLE = True
 except ImportError:  # pragma: no cover - bcrypt is in requirements.txt
     _BCRYPT_AVAILABLE = False
+
+try:
+    from argon2 import PasswordHasher
+    from argon2.exceptions import Argon2Error, InvalidHashError
+    _ARGON2_AVAILABLE = True
+    _ARGON2_HASHER = PasswordHasher()
+except ImportError:  # pragma: no cover - argon2-cffi is in requirements.txt
+    _ARGON2_AVAILABLE = False
 
 
 # --- Constants & configuration ----------------------------------------------
@@ -51,7 +61,15 @@ MASK_TOKENS: dict[str, str] = {
     "a": string.ascii_letters + string.digits + string.punctuation,
 }
 
-SUPPORTED_ALGORITHMS = ("md5", "sha1", "sha256", "bcrypt")
+SUPPORTED_ALGORITHMS = ("md5", "sha1", "sha256", "bcrypt", "argon2id", "pbkdf2_sha256")
+
+# Deliberately slow algorithms (password KDFs). Each check costs milliseconds,
+# so they run off the event loop and share the attempt/time cap below.
+SLOW_ALGORITHMS = ("bcrypt", "argon2id", "pbkdf2_sha256")
+
+# Fast general-purpose hashes - unsuitable for password storage, cracked here
+# only to show how fast they fall.
+FAST_ALGORITHMS = ("md5", "sha1", "sha256")
 
 # Hard safety cap on brute-force search space. This engine is pure Python and
 # measures ~1M guesses/sec on one core (docs/benchmark-results.md), so
@@ -118,6 +136,30 @@ def human_duration(seconds: float) -> str:
     return f"{seconds / (60 * 60 * 24 * 365):,.1f} years"
 
 
+PBKDF2_PREFIX = "pbkdf2_sha256"
+
+
+def pbkdf2_encode(password: str, salt: bytes, iterations: int) -> str:
+    """Encode a PBKDF2-HMAC-SHA256 hash in Django's `algo$iters$salt$hash` form."""
+    dk = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, iterations)
+    b64 = lambda raw: base64.b64encode(raw).decode("ascii")
+    return f"{PBKDF2_PREFIX}${iterations}${b64(salt)}${b64(dk)}"
+
+
+def _verify_pbkdf2(candidate: str, target_hash: str) -> bool:
+    """Verify a candidate against a `pbkdf2_sha256$iters$salt$hash` string."""
+    try:
+        algo, iters, b64salt, b64hash = target_hash.split("$")
+        if algo != PBKDF2_PREFIX:
+            return False
+        salt = base64.b64decode(b64salt)
+        expected = base64.b64decode(b64hash)
+    except (ValueError, TypeError):  # malformed hash
+        return False
+    dk = hashlib.pbkdf2_hmac("sha256", candidate.encode("utf-8"), salt, int(iters))
+    return hmac.compare_digest(dk, expected)
+
+
 def expand_mask(mask: str) -> list[str]:
     """
     Expand a Hashcat-style mask into the per-position charset list.
@@ -166,9 +208,12 @@ class HashCracker:
             raise CrackerError(f"Unsupported algorithm: {algorithm}")
         if algorithm == "bcrypt" and not _BCRYPT_AVAILABLE:
             raise CrackerError("bcrypt is not installed on the server")
+        if algorithm == "argon2id" and not _ARGON2_AVAILABLE:
+            raise CrackerError("argon2-cffi is not installed on the server")
 
         self.target_hash = target_hash.strip()
         self.algorithm = algorithm
+        self.is_slow = algorithm in SLOW_ALGORITHMS
         self.start_time = time.time()
         self.total_attempts = 0
 
@@ -182,18 +227,25 @@ class HashCracker:
                                       self.target_hash.encode("utf-8"))
             except (ValueError, TypeError):
                 return False
+        if self.algorithm == "argon2id":
+            try:
+                return _ARGON2_HASHER.verify(self.target_hash, candidate)
+            except (Argon2Error, InvalidHashError):
+                return False
+        if self.algorithm == "pbkdf2_sha256":
+            return _verify_pbkdf2(candidate, self.target_hash)
         return _hashlib_digest(candidate, self.algorithm) == self.target_hash.lower()
 
     async def _check(self, candidate: str) -> bool:
         """
         Verify a guess without stalling the event loop.
 
-        bcrypt is deliberately slow (up to ~300 ms per check at cost 12), so it
-        runs in a worker thread; the server keeps answering other connections
-        meanwhile. Fast hashlib digests stay inline, where a thread hop would
-        cost more than the hash itself.
+        Password KDFs (bcrypt, argon2id, pbkdf2) are deliberately slow - up to
+        hundreds of ms per check - so they run in a worker thread and the server
+        keeps answering other connections meanwhile. Fast hashlib digests stay
+        inline, where a thread hop would cost more than the hash itself.
         """
-        if self.algorithm == "bcrypt":
+        if self.is_slow:
             return await asyncio.to_thread(self.verify, candidate)
         return self.verify(candidate)
 
@@ -203,27 +255,26 @@ class HashCracker:
         await asyncio.to_thread(self.verify, "\x00not-a-real-guess")
         return time.perf_counter() - start
 
-    def _bcrypt_limit_reached(self) -> dict | None:
-        """Return an 'exhausted' update once a bcrypt run hits its cap, else None."""
-        if self.algorithm != "bcrypt":
+    def _slow_limit_reached(self) -> dict | None:
+        """Return an 'exhausted' update once a slow-KDF run hits its cap, else None."""
+        if not self.is_slow:
             return None
         elapsed = time.time() - self.start_time
         if self.total_attempts >= MAX_BCRYPT_BRUTE_FORCE_ATTEMPTS:
-            reason = f"bcrypt cap reached ({self.total_attempts} attempts)."
+            reason = f"{self.algorithm} cap reached ({self.total_attempts} attempts)."
         elif elapsed >= MAX_BCRYPT_SECONDS:
-            reason = f"bcrypt time budget reached ({MAX_BCRYPT_SECONDS:g} s)."
+            reason = f"{self.algorithm} time budget reached ({MAX_BCRYPT_SECONDS:g} s)."
         else:
             return None
         return {
             "status": "exhausted",
-            "message": f"{reason} Use dictionary mode for realistic bcrypt demos.",
+            "message": f"{reason} Use dictionary mode for realistic slow-hash demos.",
             "total_attempts": self.total_attempts,
             "time_taken": round(elapsed, 4),
         }
 
     def _progress_due(self) -> bool:
-        interval = (BCRYPT_PROGRESS_INTERVAL if self.algorithm == "bcrypt"
-                    else PROGRESS_INTERVAL)
+        interval = BCRYPT_PROGRESS_INTERVAL if self.is_slow else PROGRESS_INTERVAL
         return self.total_attempts % interval == 0
 
     # -- shared bookkeeping ---------------------------------------------
@@ -285,17 +336,20 @@ class HashCracker:
             )
 
         entropy = math.log2(search_space) if search_space > 0 else 0.0
-        bcrypt_warning = None
-        bcrypt_info: dict = {}
-        if self.algorithm == "bcrypt":
+        slow_warning = None
+        slow_info: dict = {}
+        if self.is_slow:
             # Time one real check against this hash instead of assuming a speed:
-            # the cost factor in the hash decides it (cost 12 is ~4x cost 10).
+            # the work factor is encoded in the hash (bcrypt cost 12 is ~4x cost 10).
             per_check = await self.measure_check_seconds()
-            cost = bcrypt_cost(self.target_hash)
-            bcrypt_info = {"bcrypt_cost": cost, "seconds_per_check": round(per_check, 4)}
-            cost_text = f"cost {cost}, " if cost is not None else ""
-            bcrypt_warning = (
-                f"bcrypt is intentionally slow. Brute-forcing this space "
+            slow_info = {"seconds_per_check": round(per_check, 4)}
+            cost_text = ""
+            if self.algorithm == "bcrypt":
+                cost = bcrypt_cost(self.target_hash)
+                slow_info["bcrypt_cost"] = cost
+                cost_text = f"cost {cost}, " if cost is not None else ""
+            slow_warning = (
+                f"{self.algorithm} is intentionally slow. Brute-forcing this space "
                 f"would take roughly {human_duration(search_space * per_check)} "
                 f"({cost_text}{per_check * 1000:,.0f} ms/check measured on this server). "
                 f"The run stops after {MAX_BCRYPT_BRUTE_FORCE_ATTEMPTS} attempts "
@@ -311,9 +365,9 @@ class HashCracker:
             "search_space": search_space,
             "entropy": round(entropy, 2),
         }
-        if bcrypt_warning:
-            starting["warning"] = bcrypt_warning
-            starting.update(bcrypt_info)
+        if slow_warning:
+            starting["warning"] = slow_warning
+            starting.update(slow_info)
         yield starting
         await asyncio.sleep(0)
 
@@ -326,7 +380,7 @@ class HashCracker:
                     yield self._complete(guess)
                     return
 
-                if (stop := self._bcrypt_limit_reached()) is not None:
+                if (stop := self._slow_limit_reached()) is not None:
                     yield stop
                     return
 
@@ -372,11 +426,11 @@ class HashCracker:
             if await self._check(word):
                 yield self._complete(word)
                 return
-            if (stop := self._bcrypt_limit_reached()) is not None:
+            if (stop := self._slow_limit_reached()) is not None:
                 yield stop
                 return
             if self.total_attempts % 100 == 0 or (
-                self.algorithm == "bcrypt" and self._progress_due()
+                self.is_slow and self._progress_due()
             ):
                 yield self._progress(word)
                 await asyncio.sleep(0)
@@ -420,7 +474,7 @@ class HashCracker:
                 yield self._complete(guess)
                 return
 
-            if (stop := self._bcrypt_limit_reached()) is not None:
+            if (stop := self._slow_limit_reached()) is not None:
                 yield stop
                 return
 

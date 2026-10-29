@@ -26,7 +26,7 @@ _A recorded GIF and screenshot of the dashboard are on the way. Until then, the 
 
 This is a portfolio project intended to show:
 
-- **Realistic threat modelling** - the three industry-standard offline attack strategies (brute force, dictionary, mask) against the four most common hash algorithms.
+- **Realistic threat modelling** - the three industry-standard offline attack strategies (brute force, dictionary, mask) against six hash algorithms, from fast digests (MD5/SHA) to slow KDFs (bcrypt, Argon2id, PBKDF2).
 - **Async Python** - FastAPI + WebSockets streaming progress events from an async generator-based cracker engine.
 - **Defensive engineering** - Pydantic request validation, an Origin allowlist on the WebSocket handshake (see below), asyncio.Semaphore for connection limits, search-space safety caps, structured error responses.
 - **Why bcrypt matters** - the same dictionary attack that cracks a SHA-256 hash in microseconds takes orders of magnitude longer against bcrypt; a brute force against bcrypt is refused outright with a years-to-finish estimate.
@@ -38,7 +38,7 @@ This is a portfolio project intended to show:
 | Layer | Stack |
 |---|---|
 | Backend | Python 3.12, FastAPI, Pydantic v2, Uvicorn, asyncio |
-| Crypto | hashlib (md5/sha1/sha256), bcrypt |
+| Crypto | hashlib (md5/sha1/sha256, pbkdf2), bcrypt, argon2-cffi |
 | Frontend | React 19, TypeScript 5, Vite 7 |
 | Tests | pytest, pytest-asyncio, websockets (client) |
 | Deploy | Docker, Render (backend), Vercel/Netlify (frontend) |
@@ -111,7 +111,22 @@ The fast-hash rows are this pure-Python engine on one core; a GPU cracker such a
 - **Dictionary attack against bcrypt:** finds `qwerty` on the fourth guess (about 1 s at cost 12), because the password is in the wordlist. bcrypt does **not** protect a weak password.
 - **Brute force against bcrypt:** the simulator refuses to spin for years. It warns, for example, *"Brute-forcing this space would take roughly 1.5 days (cost 12, 266 ms/check measured on this server)"* for four lowercase characters, and stops after 500 attempts or 30 seconds, whichever comes first. The same cap applies to dictionary and mask runs against bcrypt.
 - **The server stays responsive.** Each bcrypt check runs in a worker thread, so a slow job never blocks other connections. Before this fix, one cost-12 bcrypt brute force froze the event loop: `/health` took 134 s to answer and the client was disconnected. `test_health_stays_responsive_during_bcrypt_attack` guards against a regression.
-This is the educational payoff: bcrypt buys you time against brute force, but a weak password is still a weak password.
+This is the educational payoff: bcrypt buys you time against brute force, but a weak password is still a weak password. The same holds for Argon2id and PBKDF2 — both are supported here, and a dictionary attack still finds `qwerty` under either.
+
+---
+
+## Storage audit (the defensive side)
+
+Cracking shows how storage fails; the audit shows what good storage looks like. `POST /audit` takes a pasted hash and grades how it was produced against the [OWASP Password Storage Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/Password_Storage_Cheat_Sheet.html), without ever needing the plaintext. It identifies the algorithm from the hash's own structure and checks its parameters.
+
+```bash
+curl -s localhost:8000/audit -H 'content-type: application/json' \
+  -d '{"hash":"5e884898da28047151d0e56f8dc6292773603d0d6aabbdd62a11ef721d1542d8"}'
+# { "algorithm": "sha256", "verdict": "unsuitable",
+#   "recommendation": "SHA-256 is a fast general-purpose hash, not a password KDF..." }
+```
+
+Verdicts: `strong` (a modern KDF at or above OWASP minimums), `weak` (a password KDF below them, e.g. bcrypt under cost 10 or Argon2id under 19 MiB), `unsuitable` (a bare MD5/SHA digest), `unknown` (unrecognised format). OWASP ranks **Argon2id** first, then scrypt, with **bcrypt** a legacy choice (work factor ≥ 10) and PBKDF2-HMAC-SHA256 at ≥ 600,000 iterations where FIPS compliance is needed.
 
 ---
 
@@ -235,7 +250,8 @@ Done since the first version:
 
 Still on my list:
 
-- [ ] Argon2id / scrypt support and a "does this hash meet OWASP?" verdict.
+- [x] Argon2id and PBKDF2 support, plus a `POST /audit` "does this hash meet OWASP?" verdict.
+- [ ] scrypt support in the cracker (recognised by the audit already).
 - [ ] Optional larger wordlists (rockyou-style) loaded from a path instead of bundled in the repo.
 - [ ] `mypy` once the handlers and WebSocket payloads are fully annotated.
 - [ ] Multi-stage Docker build to drop build-time layers.
