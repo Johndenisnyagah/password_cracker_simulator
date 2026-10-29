@@ -16,9 +16,11 @@
 
 ## Demo
 
-_A recorded GIF and screenshot of the dashboard are on the way. Until then, the [Setup](#setup) section runs the full dashboard locally in two commands._
+![The BRUTE.EXE dashboard mid-attack: live cracking speed, current guess, and attempt count streamed over a WebSocket.](docs/screenshot.png)
 
-**Try it live:** not currently hosted — the backend deploys from the included `render.yaml` (free tier) paired with Vercel/Netlify for the frontend. See [Setup → Render](#render-backend).
+_A brute-force run in progress — entropy analysis, live cracking speed, the current guess, and the attempt count all stream from the backend over a WebSocket. The [Setup](#setup) section runs the full dashboard locally in two commands._
+
+**Try it live:** not currently hosted. The backend deploys from the included `render.yaml` (free tier) paired with Vercel/Netlify for the frontend. See [Setup → Render](#render-backend).
 
 ---
 
