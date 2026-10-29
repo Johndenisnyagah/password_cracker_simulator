@@ -37,7 +37,7 @@ This is a portfolio project intended to show:
 
 | Layer | Stack |
 |---|---|
-| Backend | Python 3.10+, FastAPI, Pydantic v2, Uvicorn, asyncio |
+| Backend | Python 3.12, FastAPI, Pydantic v2, Uvicorn, asyncio |
 | Crypto | hashlib (md5/sha1/sha256), bcrypt |
 | Frontend | React 19, TypeScript 5, Vite 7 |
 | Tests | pytest, pytest-asyncio, websockets (client) |
@@ -119,7 +119,7 @@ This is the educational payoff: bcrypt buys you time against brute force, but a 
 
 ### Prerequisites
 
-- Python 3.10+
+- Python 3.12+
 - Node.js 18+
 
 ### Backend
@@ -225,9 +225,23 @@ If you are interested in this space:
 
 ## Roadmap
 
-Things on my list for future iterations:
+Done since the first version:
 
-- [ ] CI pipeline (GitHub Actions: ruff, mypy, pytest, docker build).
-- [ ] Hardened Dockerfile (non-root user, HEALTHCHECK, multi-stage build).
-- [ ] Logging via stdlib `logging` instead of `print()`.
-- [ ] Plug-in larger wordlists (rockyou-style) without bundlin
+- [x] CI pipeline (GitHub Actions: ruff, pytest, Docker build, frontend build).
+- [x] Hardened Dockerfile (non-root user, HEALTHCHECK).
+- [x] Logging via stdlib `logging` instead of `print()`.
+- [x] bcrypt checks moved off the event loop; measured cracking benchmarks.
+- [x] WebSocket `Origin` allowlist.
+
+Still on my list:
+
+- [ ] Argon2id / scrypt support and a "does this hash meet OWASP?" verdict.
+- [ ] Optional larger wordlists (rockyou-style) loaded from a path instead of bundled in the repo.
+- [ ] `mypy` once the handlers and WebSocket payloads are fully annotated.
+- [ ] Multi-stage Docker build to drop build-time layers.
+
+---
+
+## How this was built
+
+I wrote the first version of BRUTE.EXE myself. I then used Claude (Anthropic) as a pair-programmer to review it against how this project would read to a security employer, and to help implement the fixes: moving bcrypt off the event loop, the WebSocket `Origin` check, the measured benchmarks, and this tidy-up. I reviewed and approved each change, and the test suite and CI gate everything that landed. The commits carry a `Co-Authored-By` trailer where Claude contributed.
