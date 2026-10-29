@@ -10,6 +10,13 @@
 ![Tests](https://img.shields.io/badge/tests-32%20passing-brightgreen)
 [![License: MIT](https://img.shields.io/badge/license-MIT-lightgrey)](LICENSE)
 
+
+
+
+https://github.com/user-attachments/assets/92c10b38-ff24-46e4-b9ec-80c922c226b9
+
+
+
 > **Educational use only.** This tool only ever cracks hashes that you paste into it. It never sends data anywhere, never targets remote systems, and is not a real attacker\'s tool. See [Security & ethics](#security--ethics).
 
 ---
