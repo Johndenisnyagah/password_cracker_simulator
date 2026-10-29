@@ -20,6 +20,7 @@ import asyncio
 import hashlib
 import itertools
 import math
+import re
 import string
 import time
 from collections.abc import AsyncIterator, Iterable
@@ -52,9 +53,10 @@ MASK_TOKENS: dict[str, str] = {
 
 SUPPORTED_ALGORITHMS = ("md5", "sha1", "sha256", "bcrypt")
 
-# Hard safety cap on brute-force search space. ~308M candidates is roughly
-# one minute of work at 5M guesses/sec - large enough to demo, small enough
-# that the server cannot be tied up indefinitely.
+# Hard safety cap on brute-force search space. This engine is pure Python and
+# measures ~1M guesses/sec on one core (docs/benchmark-results.md), so
+# ~308M candidates is roughly five minutes of work - large enough to demo,
+# small enough that the server cannot be tied up indefinitely.
 MAX_BRUTE_FORCE_SEARCH_SPACE = 26 ** 6  # 308,915,776
 
 # Bcrypt is intentionally slow. A brute-force attack is essentially intractable,
@@ -94,6 +96,26 @@ def _hashlib_digest(candidate: str, algorithm: str) -> str:
     h = hashlib.new(algorithm)
     h.update(candidate.encode("utf-8"))
     return h.hexdigest()
+
+
+_BCRYPT_PREFIX = re.compile(r"^\$2[abxy]?\$(\d{2})\$")
+
+
+def bcrypt_cost(target_hash: str) -> int | None:
+    """Return the cost (log2 rounds) encoded in a bcrypt hash, e.g. 12 for $2b$12$..."""
+    match = _BCRYPT_PREFIX.match(target_hash.strip())
+    return int(match.group(1)) if match else None
+
+
+def human_duration(seconds: float) -> str:
+    """Render a duration in the largest sensible unit (s, hours, days, years)."""
+    if seconds < 3600:
+        return f"{seconds:,.0f} seconds"
+    if seconds < 86400:
+        return f"{seconds / 3600:,.1f} hours"
+    if seconds < 60 * 60 * 24 * 365:
+        return f"{seconds / 86400:,.1f} days"
+    return f"{seconds / (60 * 60 * 24 * 365):,.1f} years"
 
 
 def expand_mask(mask: str) -> list[str]:
@@ -174,6 +196,12 @@ class HashCracker:
         if self.algorithm == "bcrypt":
             return await asyncio.to_thread(self.verify, candidate)
         return self.verify(candidate)
+
+    async def measure_check_seconds(self) -> float:
+        """Time one wrong-guess verification against the target hash (off the loop)."""
+        start = time.perf_counter()
+        await asyncio.to_thread(self.verify, "\x00not-a-real-guess")
+        return time.perf_counter() - start
 
     def _bcrypt_limit_reached(self) -> dict | None:
         """Return an 'exhausted' update once a bcrypt run hits its cap, else None."""
@@ -258,12 +286,18 @@ class HashCracker:
 
         entropy = math.log2(search_space) if search_space > 0 else 0.0
         bcrypt_warning = None
+        bcrypt_info: dict = {}
         if self.algorithm == "bcrypt":
-            est_seconds = search_space * 0.05
-            est_years = est_seconds / (60 * 60 * 24 * 365)
+            # Time one real check against this hash instead of assuming a speed:
+            # the cost factor in the hash decides it (cost 12 is ~4x cost 10).
+            per_check = await self.measure_check_seconds()
+            cost = bcrypt_cost(self.target_hash)
+            bcrypt_info = {"bcrypt_cost": cost, "seconds_per_check": round(per_check, 4)}
+            cost_text = f"cost {cost}, " if cost is not None else ""
             bcrypt_warning = (
                 f"bcrypt is intentionally slow. Brute-forcing this space "
-                f"would take roughly {est_years:,.1f} years at ~50ms/check. "
+                f"would take roughly {human_duration(search_space * per_check)} "
+                f"({cost_text}{per_check * 1000:,.0f} ms/check measured on this server). "
                 f"The run stops after {MAX_BCRYPT_BRUTE_FORCE_ATTEMPTS} attempts "
                 f"or {MAX_BCRYPT_SECONDS:g} s, whichever comes first."
             )
@@ -279,6 +313,7 @@ class HashCracker:
         }
         if bcrypt_warning:
             starting["warning"] = bcrypt_warning
+            starting.update(bcrypt_info)
         yield starting
         await asyncio.sleep(0)
 

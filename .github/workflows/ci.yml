@@ -36,6 +36,9 @@ jobs:
       - name: Run tests
         run: pytest --maxfail=1 -q
 
+      - name: Benchmark smoke run
+        run: python scripts/benchmark.py --quick
+
       # TODO: add `mypy .` once the codebase has full type annotations on the
       # FastAPI handlers and the React-driven WebSocket payload shapes.
 
