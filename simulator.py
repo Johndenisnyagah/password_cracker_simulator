@@ -58,8 +58,13 @@ SUPPORTED_ALGORITHMS = ("md5", "sha1", "sha256", "bcrypt")
 MAX_BRUTE_FORCE_SEARCH_SPACE = 26 ** 6  # 308,915,776
 
 # Bcrypt is intentionally slow. A brute-force attack is essentially intractable,
-# so we refuse anything larger than a token sample.
+# so every bcrypt run (brute force, dictionary or mask) stops after a token
+# sample: whichever of these two limits is reached first.
 MAX_BCRYPT_BRUTE_FORCE_ATTEMPTS = 500
+MAX_BCRYPT_SECONDS = 30.0
+
+# bcrypt runs emit a progress event this often (each check takes 1-300 ms).
+BCRYPT_PROGRESS_INTERVAL = 10
 
 # How often the running generator emits a progress event back to the websocket.
 PROGRESS_INTERVAL = 50_000
@@ -157,6 +162,42 @@ class HashCracker:
                 return False
         return _hashlib_digest(candidate, self.algorithm) == self.target_hash.lower()
 
+    async def _check(self, candidate: str) -> bool:
+        """
+        Verify a guess without stalling the event loop.
+
+        bcrypt is deliberately slow (up to ~300 ms per check at cost 12), so it
+        runs in a worker thread; the server keeps answering other connections
+        meanwhile. Fast hashlib digests stay inline, where a thread hop would
+        cost more than the hash itself.
+        """
+        if self.algorithm == "bcrypt":
+            return await asyncio.to_thread(self.verify, candidate)
+        return self.verify(candidate)
+
+    def _bcrypt_limit_reached(self) -> dict | None:
+        """Return an 'exhausted' update once a bcrypt run hits its cap, else None."""
+        if self.algorithm != "bcrypt":
+            return None
+        elapsed = time.time() - self.start_time
+        if self.total_attempts >= MAX_BCRYPT_BRUTE_FORCE_ATTEMPTS:
+            reason = f"bcrypt cap reached ({self.total_attempts} attempts)."
+        elif elapsed >= MAX_BCRYPT_SECONDS:
+            reason = f"bcrypt time budget reached ({MAX_BCRYPT_SECONDS:g} s)."
+        else:
+            return None
+        return {
+            "status": "exhausted",
+            "message": f"{reason} Use dictionary mode for realistic bcrypt demos.",
+            "total_attempts": self.total_attempts,
+            "time_taken": round(elapsed, 4),
+        }
+
+    def _progress_due(self) -> bool:
+        interval = (BCRYPT_PROGRESS_INTERVAL if self.algorithm == "bcrypt"
+                    else PROGRESS_INTERVAL)
+        return self.total_attempts % interval == 0
+
     # -- shared bookkeeping ---------------------------------------------
 
     def _progress(self, current_guess: str) -> dict:
@@ -198,7 +239,8 @@ class HashCracker:
         Try every candidate from `charset` of length 1..max_length.
 
         Raises SearchSpaceTooLargeError if the requested space exceeds the cap.
-        For bcrypt, attempts are additionally capped at MAX_BCRYPT_BRUTE_FORCE_ATTEMPTS.
+        For bcrypt, the run stops at MAX_BCRYPT_BRUTE_FORCE_ATTEMPTS or
+        MAX_BCRYPT_SECONDS, whichever comes first.
         """
         if charset_name not in CHARSETS:
             raise CrackerError(f"Unknown charset: {charset_name}")
@@ -222,7 +264,8 @@ class HashCracker:
             bcrypt_warning = (
                 f"bcrypt is intentionally slow. Brute-forcing this space "
                 f"would take roughly {est_years:,.1f} years at ~50ms/check. "
-                f"Attempts will be capped at {MAX_BCRYPT_BRUTE_FORCE_ATTEMPTS}."
+                f"The run stops after {MAX_BCRYPT_BRUTE_FORCE_ATTEMPTS} attempts "
+                f"or {MAX_BCRYPT_SECONDS:g} s, whichever comes first."
             )
 
         starting = {
@@ -239,32 +282,20 @@ class HashCracker:
         yield starting
         await asyncio.sleep(0)
 
-        attempt_cap = (
-            MAX_BCRYPT_BRUTE_FORCE_ATTEMPTS if self.algorithm == "bcrypt" else None
-        )
-
         for length in range(1, max_length + 1):
             for guess_tuple in itertools.product(chars, repeat=length):
                 guess = "".join(guess_tuple)
                 self.total_attempts += 1
 
-                if self.verify(guess):
+                if await self._check(guess):
                     yield self._complete(guess)
                     return
 
-                if attempt_cap is not None and self.total_attempts >= attempt_cap:
-                    yield {
-                        "status": "exhausted",
-                        "message": (
-                            f"bcrypt cap reached ({attempt_cap} attempts). "
-                            "Use dictionary mode for realistic bcrypt demos."
-                        ),
-                        "total_attempts": self.total_attempts,
-                        "time_taken": round(time.time() - self.start_time, 4),
-                    }
+                if (stop := self._bcrypt_limit_reached()) is not None:
+                    yield stop
                     return
 
-                if self.total_attempts % PROGRESS_INTERVAL == 0:
+                if self._progress_due():
                     yield self._progress(guess)
                 if self.total_attempts % YIELD_INTERVAL == 0:
                     await asyncio.sleep(0)
@@ -303,10 +334,15 @@ class HashCracker:
 
         for word in word_list:
             self.total_attempts += 1
-            if self.verify(word):
+            if await self._check(word):
                 yield self._complete(word)
                 return
-            if self.total_attempts % 100 == 0:
+            if (stop := self._bcrypt_limit_reached()) is not None:
+                yield stop
+                return
+            if self.total_attempts % 100 == 0 or (
+                self.algorithm == "bcrypt" and self._progress_due()
+            ):
                 yield self._progress(word)
                 await asyncio.sleep(0)
 
@@ -345,11 +381,15 @@ class HashCracker:
             guess = "".join(guess_tuple)
             self.total_attempts += 1
 
-            if self.verify(guess):
+            if await self._check(guess):
                 yield self._complete(guess)
                 return
 
-            if self.total_attempts % PROGRESS_INTERVAL == 0:
+            if (stop := self._bcrypt_limit_reached()) is not None:
+                yield stop
+                return
+
+            if self._progress_due():
                 yield self._progress(guess)
             if self.total_attempts % YIELD_INTERVAL == 0:
                 await asyncio.sleep(0)

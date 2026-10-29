@@ -7,7 +7,7 @@
 ![FastAPI](https://img.shields.io/badge/FastAPI-async-009688)
 ![React](https://img.shields.io/badge/React-19-61dafb)
 ![TypeScript](https://img.shields.io/badge/TypeScript-5-3178c6)
-![Tests](https://img.shields.io/badge/tests-28%20passing-brightgreen)
+![Tests](https://img.shields.io/badge/tests-32%20passing-brightgreen)
 [![License: MIT](https://img.shields.io/badge/license-MIT-lightgrey)](LICENSE)
 
 > **Educational use only.** This tool only ever cracks hashes that you paste into it. It never sends data anywhere, never targets remote systems, and is not a real attacker\'s tool. See [Security & ethics](#security--ethics).
@@ -99,7 +99,8 @@ Tokens: `?l` (lower), `?u` (upper), `?d` (digits), `?s` (special), `?a` (all). L
 bcrypt is intentionally slow (~50ms per hash, by design). The simulator surfaces this concretely:
 
 - **Dictionary attack against bcrypt:** cracks `qwerty` in 4 attempts (~6 ms) - because the wordlist itself is short. This shows bcrypt does **not** protect against weak passwords.
-- **Brute force against bcrypt:** the cracker refuses to spin for years. It emits a warning like *"bcrypt is intentionally slow. Brute-forcing this space would take roughly 0.5 years at ~50ms/check"* and caps attempts at 500.
+- **Brute force against bcrypt:** the cracker refuses to spin for years. It emits a warning like *"bcrypt is intentionally slow. Brute-forcing this space would take roughly 0.5 years at ~50ms/check"* and stops after 500 attempts or 30 seconds, whichever comes first. The same cap applies to dictionary and mask runs against bcrypt.
+- **The server stays responsive.** Each bcrypt check runs in a worker thread, so a slow job never blocks other connections. Before this fix, one cost-12 bcrypt brute force froze the event loop: `/health` took 134 s to answer and the client was disconnected. `test_health_stays_responsive_during_bcrypt_attack` guards against a regression.
 
 This is the educational payoff: bcrypt buys you time against brute force, but a weak password is still a weak password.
 
@@ -161,10 +162,10 @@ pytest -v
 
 The suite covers:
 
-- **`test_simulator.py`** (23 tests) - hash verification across md5/sha1/sha256/bcrypt, brute-force happy + exhausted + oversize cases, dictionary happy + exhausted + bundled-wordlist cases, mask parser (4 cases) and mask attack happy + oversize cases.
-- **`test_security.py`** (5 tests, end-to-end via a live uvicorn server) - invalid payload rejection, invalid JSON, unsupported algorithm, search-space cap, end-to-end happy path.
+- **`test_simulator.py`** (26 tests) - hash verification across md5/sha1/sha256/bcrypt, brute-force happy + exhausted + oversize cases, dictionary happy + exhausted + bundled-wordlist cases, mask parser (4 cases) and mask attack happy + oversize cases, and three bcrypt checks (the event loop is never stalled; mask runs are capped; the time budget stops a run).
+- **`test_security.py`** (6 tests, end-to-end via a live uvicorn server) - invalid payload rejection, invalid JSON, unsupported algorithm, search-space cap, end-to-end happy path, and `/health` answering in under 0.5 s while a bcrypt job runs.
 
-**Current status:** 28/28 passing in under three seconds.
+**Current status:** 32/32 passing in under five seconds.
 
 ---
 

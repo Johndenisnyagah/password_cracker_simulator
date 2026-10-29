@@ -272,3 +272,68 @@ def test_brute_force_search_space_matches_formula(charset_name: str, max_length:
     N = len(CHARSETS[charset_name])
     expected = sum(N ** L for L in range(1, max_length + 1))
     assert event["search_space"] == expected
+
+
+# --- bcrypt must not block the event loop ----------------------------------
+
+async def _max_loop_gap(coro) -> float:
+    """Run `coro` next to a 10 ms ticker and return the longest stall seen."""
+    import asyncio
+    import time
+
+    gaps: list[float] = []
+    done = asyncio.Event()
+
+    async def ticker() -> None:
+        last = time.perf_counter()
+        while not done.is_set():
+            await asyncio.sleep(0.01)
+            now = time.perf_counter()
+            gaps.append(now - last)
+            last = now
+
+    tick = asyncio.create_task(ticker())
+    try:
+        await coro
+    finally:
+        done.set()
+        await tick
+    return max(gaps) if gaps else 0.0
+
+
+@pytest.mark.asyncio
+async def test_bcrypt_brute_force_does_not_block_event_loop(monkeypatch) -> None:
+    """Each bcrypt check runs off the loop, so other connections keep being served."""
+    import simulator
+
+    monkeypatch.setattr(simulator, "MAX_BCRYPT_BRUTE_FORCE_ATTEMPTS", 12)
+    target = bcrypt.hashpw(b"zz", bcrypt.gensalt(rounds=10)).decode()  # ~70 ms/check
+    cracker = HashCracker(target_hash=target, algorithm="bcrypt")
+    gap = await _max_loop_gap(_collect(cracker.brute_force("lower", 2)))
+    assert gap < 0.25, f"event loop stalled for {gap:.2f}s"
+
+
+@pytest.mark.asyncio
+async def test_bcrypt_mask_attack_is_capped(monkeypatch) -> None:
+    """Mask mode against bcrypt stops at the attempt cap instead of running for hours."""
+    import simulator
+
+    monkeypatch.setattr(simulator, "MAX_BCRYPT_BRUTE_FORCE_ATTEMPTS", 20)
+    target = bcrypt.hashpw(b"zzz", bcrypt.gensalt(rounds=4)).decode()
+    cracker = HashCracker(target_hash=target, algorithm="bcrypt")
+    updates = await _collect(cracker.mask("?l?l?l"))
+    assert updates[-1]["status"] == "exhausted"
+    assert updates[-1]["total_attempts"] == 20
+
+
+@pytest.mark.asyncio
+async def test_bcrypt_time_budget_stops_attack(monkeypatch) -> None:
+    """A wall-clock budget ends a bcrypt run even before the attempt cap."""
+    import simulator
+
+    monkeypatch.setattr(simulator, "MAX_BCRYPT_SECONDS", 0.3)
+    target = bcrypt.hashpw(b"zz", bcrypt.gensalt(rounds=10)).decode()
+    cracker = HashCracker(target_hash=target, algorithm="bcrypt")
+    updates = await _collect(cracker.brute_force("lower", 2))
+    assert updates[-1]["status"] == "exhausted"
+    assert updates[-1]["total_attempts"] < simulator.MAX_BCRYPT_BRUTE_FORCE_ATTEMPTS
