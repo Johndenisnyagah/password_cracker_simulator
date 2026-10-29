@@ -28,7 +28,7 @@ This is a portfolio project intended to show:
 
 - **Realistic threat modelling** - the three industry-standard offline attack strategies (brute force, dictionary, mask) against the four most common hash algorithms.
 - **Async Python** - FastAPI + WebSockets streaming progress events from an async generator-based cracker engine.
-- **Defensive engineering** - Pydantic request validation, env-driven CORS allowlist, asyncio.Semaphore for connection limits, search-space safety caps, structured error responses.
+- **Defensive engineering** - Pydantic request validation, an Origin allowlist on the WebSocket handshake (see below), asyncio.Semaphore for connection limits, search-space safety caps, structured error responses.
 - **Why bcrypt matters** - the same dictionary attack that cracks a SHA-256 hash in microseconds takes orders of magnitude longer against bcrypt; a brute force against bcrypt is refused outright with a years-to-finish estimate.
 
 ---
@@ -148,7 +148,7 @@ The included `render.yaml` deploys the FastAPI backend as a free-tier web servic
 
 | Env var | Default | Purpose |
 |---|---|---|
-| `CORS_ORIGINS` | `http://localhost:5173,http://127.0.0.1:5173` | Comma-separated allowlist of origins. Set this to your deployed frontend URL in production. |
+| `CORS_ORIGINS` | `http://localhost:5173,http://127.0.0.1:5173` | Comma-separated allowlist of origins, used for HTTP CORS **and** for the WebSocket Origin check. Set this to your deployed frontend URL in production. |
 | `PORT` | `8000` | Render injects this automatically. |
 
 ---
@@ -199,6 +199,12 @@ The cracker is an async generator. Each iteration yields a JSON-serialisable pro
 This is a teaching tool. It hashes guesses locally and compares them to a hash you paste into the UI. It does not - and cannot - target remote systems.
 
 **Do not use this (or any cracking tool) against systems you do not own or have written permission to test.** Unauthorised computer access is illegal in most jurisdictions (US: CFAA, UK: Computer Misuse Act, EU: NIS 2 / national law).
+
+### A flaw I found in my own defences
+
+The first version listed "env-driven CORS allowlist" as a security control. It did not protect the WebSocket at all: Starlette's `CORSMiddleware` only applies to HTTP requests, and browsers do not enforce CORS on WebSocket handshakes. A test connection with `Origin: https://evil.example` was accepted and ran a full attack. That is cross-site WebSocket hijacking ([CWE-1385](https://cwe.mitre.org/data/definitions/1385.html)): any web page could have driven the server from a visitor's browser.
+
+The endpoint now checks the `Origin` header against `CORS_ORIGINS` before accepting the handshake and refuses anything else with HTTP 403. Requests without an Origin header (scripts, curl, the test suite) are allowed, because only browsers send one and a non-browser client could forge it anyway. `test_foreign_origin_websocket_is_rejected` guards the fix.
 
 If you are interested in this space:
 - Try the [Hack The Box Academy](https://academy.hackthebox.com/) password-cracking modules.

@@ -140,5 +140,34 @@ async def test_valid_brute_force_finds_short_hash(server) -> None:
         assert final["password"] == "ab"
 
 
+_SHA256_PASSWORD = "5e884898da28047151d0e56f8dc6292773603d0d6aabbdd62a11ef721d1542d8"
+
+
+@pytest.mark.asyncio
+async def test_foreign_origin_websocket_is_rejected(server) -> None:
+    """Cross-site WebSocket hijacking (CWE-1385): a page on another origin must
+    not be able to open the socket. CORSMiddleware does not cover WebSockets,
+    so the endpoint checks the Origin header itself."""
+    with pytest.raises(websockets.exceptions.InvalidStatusCode) as exc:
+        async with websockets.connect(_uri(), origin="https://evil.example"):
+            pass
+    assert exc.value.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_allowed_origin_websocket_is_accepted(server) -> None:
+    """The dashboard's own origin (from CORS_ORIGINS) still connects."""
+    async with websockets.connect(_uri(), origin="http://localhost:5173") as ws:
+        await ws.send(json.dumps({
+            "hash": _SHA256_PASSWORD, "algorithm": "sha256", "attack_mode": "dictionary",
+        }))
+        final = None
+        async for msg in ws:
+            final = json.loads(msg)
+            if final["status"] in ("complete", "exhausted", "error"):
+                break
+    assert final is not None and final["password"] == "password"
+
+
 if __name__ == "__main__":
     print("Run with: pytest test_security.py")

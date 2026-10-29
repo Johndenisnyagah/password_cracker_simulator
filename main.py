@@ -61,6 +61,23 @@ app.add_middleware(
 )
 
 
+
+def origin_allowed(origin: str | None) -> bool:
+    """
+    Decide whether a WebSocket handshake may proceed.
+
+    Starlette's CORSMiddleware only handles HTTP requests, not WebSocket
+    handshakes, so without this check any web page could open the socket from
+    a visitor's browser (cross-site WebSocket hijacking, CWE-1385). Browsers
+    always send an Origin header on WebSocket handshakes; a request without one
+    comes from a non-browser client (a script, curl, the test suite), which
+    could set any header it liked anyway, so it is allowed.
+    """
+    if origin is None:
+        return True
+    return origin in ALLOWED_ORIGINS
+
+
 # --- Inbound payload schema ------------------------------------------------
 
 class AttackRequest(BaseModel):
@@ -127,12 +144,19 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
     Receive an AttackRequest payload then stream cracking progress updates.
 
     Lifecycle:
+        0. Refuse the handshake (HTTP 403) if the Origin is not allowlisted.
         1. Accept the connection (so we can send a meaningful error if busy).
         2. Try to acquire a simulation slot - reject immediately if at capacity.
         3. Receive + validate the AttackRequest payload.
         4. Dispatch to the requested attack mode and stream updates.
         5. Release the slot on close (success, error, or disconnect).
     """
+    origin = websocket.headers.get("origin")
+    if not origin_allowed(origin):
+        logger.warning("rejected websocket from disallowed origin %r", origin)
+        await websocket.close(code=1008)  # before accept() -> HTTP 403
+        return
+
     await websocket.accept()
 
     # Try to acquire a slot without blocking - reject explicitly when full.
