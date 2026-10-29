@@ -337,3 +337,42 @@ async def test_bcrypt_time_budget_stops_attack(monkeypatch) -> None:
     updates = await _collect(cracker.brute_force("lower", 2))
     assert updates[-1]["status"] == "exhausted"
     assert updates[-1]["total_attempts"] < simulator.MAX_BCRYPT_BRUTE_FORCE_ATTEMPTS
+
+
+# --- measured bcrypt estimate ------------------------------------------------
+
+@pytest.mark.parametrize("prefix,cost", [("$2b$12$", 12), ("$2a$04$", 4), ("$2y$10$", 10)])
+def test_bcrypt_cost_is_read_from_hash(prefix: str, cost: int) -> None:
+    from simulator import bcrypt_cost
+
+    assert bcrypt_cost(prefix + "x" * 53) == cost
+
+
+def test_bcrypt_cost_none_for_non_bcrypt() -> None:
+    from simulator import bcrypt_cost
+
+    assert bcrypt_cost(_digest("abc", "sha256")) is None
+
+
+@pytest.mark.asyncio
+async def test_bcrypt_estimate_uses_measured_speed(monkeypatch) -> None:
+    """The warning reports the hash's real cost and a measured per-check time."""
+    import simulator
+
+    monkeypatch.setattr(simulator, "MAX_BCRYPT_BRUTE_FORCE_ATTEMPTS", 3)
+    target = bcrypt.hashpw(b"zz", bcrypt.gensalt(rounds=4)).decode()
+    cracker = HashCracker(target_hash=target, algorithm="bcrypt")
+    starting = (await _collect(cracker.brute_force("lower", 2)))[0]
+    assert starting["bcrypt_cost"] == 4
+    assert 0 < starting["seconds_per_check"] < 0.5
+    assert "cost 4" in starting["warning"]
+    assert "50ms" not in starting["warning"]
+
+
+@pytest.mark.parametrize("seconds,expected", [
+    (59, "59 seconds"), (7200, "2.0 hours"), (126_417, "1.5 days"), (3 * 31_536_000, "3.0 years"),
+])
+def test_human_duration(seconds: float, expected: str) -> None:
+    from simulator import human_duration
+
+    assert human_duration(seconds) == expected

@@ -96,12 +96,21 @@ Tokens: `?l` (lower), `?u` (upper), `?d` (digits), `?s` (special), `?a` (all). L
 
 ## The bcrypt moment
 
-bcrypt is intentionally slow (~50ms per hash, by design). The simulator surfaces this concretely:
+bcrypt is slow on purpose, and how slow depends on the cost factor stored in the hash itself (`$2b$12$...` is cost 12; each +1 doubles the work). The simulator reads that cost and times one real check against your hash before it starts, so its estimates are measured rather than assumed.
 
-- **Dictionary attack against bcrypt:** cracks `qwerty` in 4 attempts (~6 ms) - because the wordlist itself is short. This shows bcrypt does **not** protect against weak passwords.
-- **Brute force against bcrypt:** the cracker refuses to spin for years. It emits a warning like *"bcrypt is intentionally slow. Brute-forcing this space would take roughly 0.5 years at ~50ms/check"* and stops after 500 attempts or 30 seconds, whichever comes first. The same cap applies to dictionary and mask runs against bcrypt.
+Measured with `python scripts/benchmark.py` ([full results](docs/benchmark-results.md)):
+
+| Algorithm | Measured speed | Time to try every 6-char lowercase password |
+|---|---|---|
+| MD5 / SHA-1 / SHA-256 | ~1M guesses/s | ~5 minutes |
+| bcrypt cost 10 | 73 ms/check | ~261 days |
+| bcrypt cost 12 | 266 ms/check | ~2.6 years |
+
+The fast-hash rows are this pure-Python engine on one core; a GPU cracker such as Hashcat is far faster, so treat them as a floor for an attacker.
+
+- **Dictionary attack against bcrypt:** finds `qwerty` on the fourth guess (about 1 s at cost 12), because the password is in the wordlist. bcrypt does **not** protect a weak password.
+- **Brute force against bcrypt:** the simulator refuses to spin for years. It warns, for example, *"Brute-forcing this space would take roughly 1.5 days (cost 12, 266 ms/check measured on this server)"* for four lowercase characters, and stops after 500 attempts or 30 seconds, whichever comes first. The same cap applies to dictionary and mask runs against bcrypt.
 - **The server stays responsive.** Each bcrypt check runs in a worker thread, so a slow job never blocks other connections. Before this fix, one cost-12 bcrypt brute force froze the event loop: `/health` took 134 s to answer and the client was disconnected. `test_health_stays_responsive_during_bcrypt_attack` guards against a regression.
-
 This is the educational payoff: bcrypt buys you time against brute force, but a weak password is still a weak password.
 
 ---
