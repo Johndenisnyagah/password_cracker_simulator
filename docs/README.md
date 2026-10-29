@@ -1,10 +1,14 @@
 # Demo assets
 
-This folder holds the recorded GIF and screenshot referenced in the project README.
+This folder holds the screenshot referenced in the project README.
 
-## TODO
+## Contents
 
-- [ ] `demo.gif` - 5-10s loop of a brute-force or mask attack running in the dashboard.
-- [ ] `screenshot.png` - static hero shot of the completion modal.
+- `screenshot.png` — the dashboard during a live brute-force run (hero image in the main README).
+- `benchmark-results.md` — measured cracking speeds per algorithm (`python scripts/benchmark.py`).
 
-Suggested tooling: [LICEcap](https://www.cockos.com/licecap/) or [Peek](https://github.com/phw/peek) for the GIF; built-in OS screenshot for the PNG.
+## Still optional
+
+- [ ] `demo.gif` — a 5-10s loop of an attack running, for a bit more motion than the static shot.
+
+Suggested tooling for a GIF: [LICEcap](https://www.cockos.com/licecap/) or [Peek](https://github.com/phw/peek).
