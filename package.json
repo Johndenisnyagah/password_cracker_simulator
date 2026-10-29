@@ -20,7 +20,7 @@
     "@types/react-dom": "^19.1.6",
     "@vitejs/plugin-react": "^4.6.0",
     "autoprefixer": "^10.6.1",
-    "postcss": "^8.5.8",
+    "postcss": "^8.5.31",
     "tailwindcss": "^4.2.1",
     "typescript": "~7.0.2",
     "vite": "^7.0.4"
