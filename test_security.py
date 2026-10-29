@@ -16,12 +16,14 @@ exercised in test_simulator.py.
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import multiprocessing
 import socket
 import time
 
+import bcrypt
 import pytest
 import uvicorn
 import websockets
@@ -138,6 +140,43 @@ async def test_valid_brute_force_finds_short_hash(server) -> None:
         assert final is not None
         assert final["status"] == "complete"
         assert final["password"] == "ab"
+
+
+@pytest.mark.asyncio
+async def test_health_stays_responsive_during_bcrypt_attack(server) -> None:
+    """A slow bcrypt job must not freeze the server for everyone else.
+
+    Before the fix, a cost-12 bcrypt brute force held the event loop so long
+    that /health took 134 s to answer and the client was dropped.
+    """
+    import urllib.request
+
+    target = bcrypt.hashpw(b"zz", bcrypt.gensalt(rounds=10)).decode()  # ~70 ms/check
+
+    def health_latency() -> float:
+        start = time.perf_counter()
+        with urllib.request.urlopen(f"http://127.0.0.1:{_PORT}/health", timeout=10) as r:
+            r.read()
+        return time.perf_counter() - start
+
+    async with websockets.connect(_uri()) as ws:
+        await ws.send(json.dumps({
+            "hash": target,
+            "algorithm": "bcrypt",
+            "attack_mode": "brute_force",
+            "charset": "lower",
+            "max_length": 1,  # 26 checks, ~2 s
+        }))
+        await ws.recv()  # "starting": the job is now running
+        latency = await asyncio.to_thread(health_latency)
+        final = None
+        async for msg in ws:
+            final = json.loads(msg)
+            if final.get("status") in ("complete", "exhausted", "error"):
+                break
+
+    assert latency < 0.5, f"/health took {latency:.2f}s during a bcrypt job"
+    assert final is not None and final["status"] == "exhausted"
 
 
 if __name__ == "__main__":
