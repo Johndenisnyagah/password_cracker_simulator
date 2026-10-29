@@ -150,10 +150,10 @@ async def test_foreign_origin_websocket_is_rejected(server) -> None:
     """Cross-site WebSocket hijacking (CWE-1385): a page on another origin must
     not be able to open the socket. CORSMiddleware does not cover WebSockets,
     so the endpoint checks the Origin header itself."""
-    with pytest.raises(websockets.exceptions.InvalidStatusCode) as exc:
+    with pytest.raises(websockets.exceptions.InvalidStatus) as exc:
         async with websockets.connect(_uri(), origin="https://evil.example"):
             pass
-    assert exc.value.status_code == 403
+    assert exc.value.response.status_code == 403
 
 
 @pytest.mark.asyncio
