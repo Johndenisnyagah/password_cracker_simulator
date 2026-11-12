@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1
 # Lightweight, non-root image for the FastAPI backend.
-FROM python:3.12-slim
+FROM python:3.15-slim
 
 WORKDIR /app
 
